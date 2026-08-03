@@ -8,3 +8,4 @@ __pycache__/
 pytorch_ext/build/
 pytorch_ext/*.egg-info/
 pytorch_ext/*.so
+.DS_Store
