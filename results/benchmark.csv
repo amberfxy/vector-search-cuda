@@ -1,0 +1,7 @@
+method,num_vectors,dim,avg_latency_ms
+cpu_singlethread,10000,384,4.96467
+cpu_openmp,10000,384,5.03637
+cpu_singlethread,100000,384,49.4826
+cpu_openmp,100000,384,50.2846
+cpu_singlethread,1000000,384,507.362
+cpu_openmp,1000000,384,510.738

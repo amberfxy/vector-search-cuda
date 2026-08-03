@@ -236,25 +236,3 @@ Speedup, tiled vs. naive GPU: **[X]x**
 Speedup, tiled GPU vs. multi-threaded CPU: **[Y]x**
 
 ![latency chart](results/latency_chart.png)
-
-## Resume bullet template
-
-*(Use only once the numbers above are filled in with real, measured
-results -- these placeholders are meant to be replaced, not copied as-is.)*
-
-```
-Tech Stack: Python, FAISS, Docker, Streamlit, C++, CUDA
-
-• Designed and implemented a CUDA C++ vector similarity search engine
-  (L2/cosine distance) as a GPU-accelerated alternative to the system's
-  CPU-based FAISS retrieval path, including custom memory management and
-  batched distance computation in C++.
-• Optimized a naive CUDA kernel using shared memory tiling to reduce
-  redundant global memory accesses, achieving a [X]x speedup over the
-  naive GPU implementation and [Y]x speedup over a multi-threaded CPU
-  baseline across datasets ranging from 10K to 1M vectors.
-• (optional, if you build the Thrust top-k piece) Implemented GPU-based
-  top-k candidate selection using Thrust, completing an end-to-end
-  GPU-accelerated retrieval pipeline from distance computation through
-  ranked results.
-```
