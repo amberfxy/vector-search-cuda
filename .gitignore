@@ -1,6 +1,10 @@
 build/
 bench_runner
 test_correctness
+test_correctness_gpu
 *.o
 *.obj
 __pycache__/
+pytorch_ext/build/
+pytorch_ext/*.egg-info/
+pytorch_ext/*.so
