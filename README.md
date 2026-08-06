@@ -235,25 +235,47 @@ paper over)
 ## Results
 
 Measured on **Google Colab Tesla T4** (CUDA 12.8), `dim=384`, L2 distance.
+Main-table numbers are from a re-run averaged over **50 queries** per size
+(earlier 10-query runs showed Colab CPU OpenMP jitter at 100K).
 GPU columns below are **kernel-only** times (exclude host↔device transfer).
 Wall-clock numbers (with per-query re-upload) are in `results/benchmark.csv`
 and on the chart -- at 100K–1M they are dominated by transfer, as noted under
-Known limitations.
+Known limitations. FAISS CPU is from the same Colab machine (separate script).
 
 | Dataset size | CPU single-thread | CPU OpenMP | GPU naive (kernel) | GPU tiled (kernel) | FAISS CPU |
 |---|---|---|---|---|---|
-| 10,000    | 5.52 ms | 3.09 ms | 0.50 ms | 0.24 ms | 4.30 ms |
-| 100,000   | 58.2 ms | 61.6 ms | 3.35 ms | 2.33 ms | 45.0 ms |
-| 1,000,000 | 578 ms | 304 ms | 28.4 ms | 28.5 ms | 416 ms |
+| 10,000    | 4.85 ms | 2.57 ms | 0.28 ms | 0.18 ms | 4.30 ms |
+| 100,000   | 50.8 ms | 37.0 ms | 2.68 ms | 2.78 ms | 45.0 ms |
+| 1,000,000 | 486 ms | 286 ms | 28.3 ms | 28.4 ms | 416 ms |
 
-Speedup, tiled vs. naive GPU (kernel, 10K): **2.1×**
-Speedup, tiled GPU vs. multi-threaded CPU (kernel, 100K): **26×**
-Speedup, tiled GPU vs. multi-threaded CPU (kernel, 1M): **11×**
+Speedup, tiled vs. naive GPU (kernel, 10K): **1.6×**
+Speedup, tiled GPU vs. multi-threaded CPU (kernel, 100K): **13×**
+Speedup, tiled GPU vs. multi-threaded CPU (kernel, 1M): **10×**
 
-At 1M vectors the tiled and naive kernels are essentially tied (~28 ms): the
-shared-memory query tiling win is clearest at smaller/medium sizes; at large
-`n` other costs dominate the kernel path. GPU wall-clock at 1M (~405–422 ms)
-is close to FAISS CPU / OpenMP because this benchmark re-transfers the full
+At 100K–1M the tiled and naive kernels are essentially tied (~2.7 ms / ~28 ms):
+the shared-memory query tiling win is clearest at smaller sizes; at large `n`
+other costs dominate the kernel path. GPU wall-clock at 1M (~391–393 ms) is
+close to FAISS CPU / OpenMP because this benchmark re-transfers the full
 dataset every query.
 
 ![latency chart](results/latency_chart.png)
+
+### PyTorch extension (device-resident tensors)
+
+Same T4, custom tiled kernel wrapped as a PyTorch CUDA extension vs.
+`torch.cdist` / `F.cosine_similarity`. Timed with `torch.cuda.Event` on
+already-GPU-resident tensors (no host↔device transfer in the timed path).
+Raw numbers: `results/benchmark_torch.csv`.
+
+| Dataset size | custom L2 | `torch.cdist` L2 | custom cosine | `F.cosine_similarity` |
+|---|---|---|---|---|
+| 10,000    | 0.24 ms | 6.15 ms | 0.24 ms | 3.32 ms |
+| 100,000   | 2.47 ms | 4.67 ms | 2.20 ms | 5.13 ms |
+| 1,000,000 | 20.8 ms | 48.8 ms | 20.9 ms | 50.9 ms |
+
+On this T4 run the custom kernel was faster than the built-in ops at every
+size tested (about **1.9×** vs `torch.cdist` at 100K, **2.4×** at 1M). That
+is a useful data point for this narrow brute-force distance pattern; it is
+not a claim that hand-written kernels beat PyTorch in general.
+
+![PyTorch extension latency chart](results/latency_chart_torch.png)

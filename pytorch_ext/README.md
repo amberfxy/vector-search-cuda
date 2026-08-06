@@ -48,14 +48,12 @@ demo_rerank.py              -- end-to-end usage: embed a query, score
 
 ## What's verified vs. not
 
-**Not yet run anywhere** -- this sandbox has no GPU, no PyTorch, and no
-network access to install PyTorch, so none of this has been compiled or
-executed. The binding code follows the standard
-`torch.utils.cpp_extension` pattern and the tensor validation checks are
-the ones the ecosystem expects (device, dtype, contiguity, shape), but
-"written correctly by inspection" and "compiled and run" are different
-claims -- see the main README's own version of this same caveat for the
-standalone CUDA kernels, which applies here too, in full.
+**Verified on Google Colab Tesla T4 (CUDA 12.8):**
+`test_correctness_torch.py` passed against `torch.cdist` /
+`F.cosine_similarity` (max abs diff well under 1e-4 across several
+`n`/`dim` pairs). `benchmark_torch.py` numbers are in
+`../results/benchmark_torch.csv` and summarized in the main README
+Results section.
 
 ## Building and running (on a machine with an NVIDIA GPU + PyTorch + CUDA toolkit)
 
@@ -78,18 +76,15 @@ These don't need to match exactly, but should be close (e.g. both CUDA
 12.x); a PyTorch built for CUDA 11.8 paired with a CUDA 12.4 toolkit is a
 common source of build errors.
 
-## Once you have real numbers
+## Measured numbers (Colab T4)
 
-Update the main README's Results section with a note like:
+Custom tiled L2 vs `torch.cdist` at dim=384 (device-resident):
 
-> The custom tiled kernel, wrapped as a PyTorch extension, ran at [X] ms
-> vs. PyTorch's built-in `torch.cdist` at [Y] ms for the same
-> query-vs-100K-vector search (dim=384). [State plainly whether it was
-> faster, comparable, or slower -- all three are informative results, and
-> "slower than a library that took years to optimize" is not a bad
-> outcome to report honestly.]
+| Dataset size | custom L2 | `torch.cdist` |
+|---|---|---|
+| 10,000 | 0.24 ms | 6.15 ms |
+| 100,000 | 2.47 ms | 4.67 ms |
+| 1,000,000 | 20.8 ms | 48.8 ms |
 
-And only then consider adding "PyTorch" to a resume skills list or
-project bullet -- before that, it would be listing a skill with no
-run/verified evidence behind it, same reasoning as everywhere else in
-this project.
+See the main README Results section for cosine numbers and the chart in
+`../results/latency_chart_torch.png`.

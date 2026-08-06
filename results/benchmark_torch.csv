@@ -1,0 +1,13 @@
+method,num_vectors,dim,avg_latency_ms
+custom_cuda_l2,10000,384,0.2434
+pytorch_cdist_l2,10000,384,6.1508
+custom_cuda_cosine,10000,384,0.2356
+pytorch_cosine_similarity,10000,384,3.3190
+custom_cuda_l2,100000,384,2.4691
+pytorch_cdist_l2,100000,384,4.6682
+custom_cuda_cosine,100000,384,2.1994
+pytorch_cosine_similarity,100000,384,5.1277
+custom_cuda_l2,1000000,384,20.7673
+pytorch_cdist_l2,1000000,384,48.8111
+custom_cuda_cosine,1000000,384,20.9252
+pytorch_cosine_similarity,1000000,384,50.8823

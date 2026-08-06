@@ -24,6 +24,10 @@ METHOD_LABELS = {
     "gpu_tiled_wallclock": "GPU tiled/shared-mem (wall-clock, incl. transfer)",
     "gpu_tiled_kernel_only": "GPU tiled/shared-mem (kernel-only)",
     "faiss_cpu": "FAISS (CPU)",
+    "custom_cuda_l2": "Custom CUDA L2 (PyTorch ext, device-resident)",
+    "pytorch_cdist_l2": "torch.cdist L2",
+    "custom_cuda_cosine": "Custom CUDA cosine (PyTorch ext, device-resident)",
+    "pytorch_cosine_similarity": "F.cosine_similarity",
 }
 
 
