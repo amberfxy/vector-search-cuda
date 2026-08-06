@@ -65,27 +65,17 @@ shared timing state into its own translation unit is the standard fix.
 
 ## What's verified vs. what needs a GPU to verify
 
-**Verified in this sandbox (no GPU available here):** the entire CPU path
-(`vector_store.hpp`, `distance_cpu.cpp`, `topk_cpu.cpp`) is compiled and
-tested -- `tests/test_correctness.cpp` passes, covering known L2/cosine
-values, single-thread-vs-OpenMP agreement, and top-k correctness. The
-benchmark driver's CPU path was also run end-to-end (see
-`results/benchmark.csv` for a sample run from a 1-core sandbox machine --
-note that OpenMP shows no speedup there specifically because that machine
-only exposes 1 CPU core; on real multi-core hardware you should see OpenMP
-meaningfully outperform single-thread).
+**Verified on CPU (any machine):** the entire CPU path
+(`vector_store.hpp`, `distance_cpu.cpp`, `topk_cpu.cpp`) --
+`tests/test_correctness.cpp` covers known L2/cosine values,
+single-thread-vs-OpenMP agreement, and top-k correctness.
 
-**Written but NOT yet compiled/run (needs an actual NVIDIA GPU + CUDA
-toolkit):** everything in `src/cuda/`. The kernels are written to standard
-CUDA idiom and I've reasoned through the launch configuration and shared
-memory sizing carefully, but "I wrote code that should work" and "I ran it
-and it's correct" are different claims, and I'm not overstating which one
-this is. `tests/test_correctness_gpu.cpp` is written specifically to
-resolve that question the moment you have real hardware -- it checks both
-kernels against the CPU ground truth (tolerance 1e-4), including edge
-cases smaller than one thread block, and cross-checks the two GPU kernels
-against each other. **Run it first, before trusting any `bench_runner`
-number or putting any number on a resume.**
+**Verified on Google Colab Tesla T4 (CUDA 12.8):**
+`tests/test_correctness_gpu.cpp` passed (naive & tiled kernels vs. CPU
+ground truth, tolerance 1e-4, including non-block-aligned sizes).
+`bench_runner` numbers below are from that same class of T4 run.
+The PyTorch extension path is also verified -- see `pytorch_ext/README.md`
+and the Results subsection below.
 
 ## Building
 
