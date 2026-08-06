@@ -70,10 +70,10 @@ shared timing state into its own translation unit is the standard fix.
 `tests/test_correctness.cpp` covers known L2/cosine values,
 single-thread-vs-OpenMP agreement, and top-k correctness.
 
-**Verified on Google Colab Tesla T4 (CUDA 12.8):**
+**Verified on Google Colab NVIDIA Tesla T4 (15 GB; nvcc 12.8):**
 `tests/test_correctness_gpu.cpp` passed (naive & tiled kernels vs. CPU
 ground truth, tolerance 1e-4, including non-block-aligned sizes).
-`bench_runner` numbers below are from that same class of T4 run.
+`bench_runner` numbers below are from that same T4 class of run.
 The PyTorch extension path is also verified -- see `pytorch_ext/README.md`
 and the Results subsection below.
 
@@ -224,13 +224,15 @@ paper over)
 
 ## Results
 
-Measured on **Google Colab Tesla T4** (CUDA 12.8), `dim=384`, L2 distance.
+**Hardware:** Google Colab **NVIDIA Tesla T4** (15 GB VRAM), driver reporting
+CUDA 13.0, project built with **nvcc CUDA toolkit 12.8**.
+**Workload:** `dim=384`, L2 distance unless noted.
 Main-table numbers are from a re-run averaged over **50 queries** per size
 (earlier 10-query runs showed Colab CPU OpenMP jitter at 100K).
 GPU columns below are **kernel-only** times (exclude host↔device transfer).
 Wall-clock numbers (with per-query re-upload) are in `results/benchmark.csv`
 and on the chart -- at 100K–1M they are dominated by transfer, as noted under
-Known limitations. FAISS CPU is from the same Colab machine (separate script).
+Known limitations. FAISS CPU is from the same Colab T4 machine (separate script).
 
 | Dataset size | CPU single-thread | CPU OpenMP | GPU naive (kernel) | GPU tiled (kernel) | FAISS CPU |
 |---|---|---|---|---|---|
