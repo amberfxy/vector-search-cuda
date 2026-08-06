@@ -234,16 +234,26 @@ paper over)
 
 ## Results
 
-*(Fill in after running on real hardware -- this is a template, not
-invented numbers.)*
+Measured on **Google Colab Tesla T4** (CUDA 12.8), `dim=384`, L2 distance.
+GPU columns below are **kernel-only** times (exclude host↔device transfer).
+Wall-clock numbers (with per-query re-upload) are in `results/benchmark.csv`
+and on the chart -- at 100K–1M they are dominated by transfer, as noted under
+Known limitations.
 
 | Dataset size | CPU single-thread | CPU OpenMP | GPU naive (kernel) | GPU tiled (kernel) | FAISS CPU |
 |---|---|---|---|---|---|
-| 10,000    | | | | | |
-| 100,000   | | | | | |
-| 1,000,000 | | | | | |
+| 10,000    | 5.52 ms | 3.09 ms | 0.50 ms | 0.24 ms | 4.30 ms |
+| 100,000   | 58.2 ms | 61.6 ms | 3.35 ms | 2.33 ms | 45.0 ms |
+| 1,000,000 | 578 ms | 304 ms | 28.4 ms | 28.5 ms | 416 ms |
 
-Speedup, tiled vs. naive GPU: **[X]x**
-Speedup, tiled GPU vs. multi-threaded CPU: **[Y]x**
+Speedup, tiled vs. naive GPU (kernel, 10K): **2.1×**
+Speedup, tiled GPU vs. multi-threaded CPU (kernel, 100K): **26×**
+Speedup, tiled GPU vs. multi-threaded CPU (kernel, 1M): **11×**
+
+At 1M vectors the tiled and naive kernels are essentially tied (~28 ms): the
+shared-memory query tiling win is clearest at smaller/medium sizes; at large
+`n` other costs dominate the kernel path. GPU wall-clock at 1M (~405–422 ms)
+is close to FAISS CPU / OpenMP because this benchmark re-transfers the full
+dataset every query.
 
 ![latency chart](results/latency_chart.png)
