@@ -1,25 +1,27 @@
-# CUDA-Accelerated Vector Similarity Search Engine
+<div align="center">
 
-A from-scratch C++/CUDA implementation of brute-force vector similarity
-search (L2 distance and cosine similarity), built as a GPU-accelerated
-counterpart to the CPU-based FAISS retrieval path used in my
-[Financial Market Intelligence RAG System]. Benchmarked against
-single-threaded CPU, multi-threaded CPU (OpenMP), and FAISS itself across
-dataset sizes from 10K to 1M vectors.
+# CUDA Vector Similarity Search
 
-This is not a production vector database. It's a focused engineering
-exercise in GPU performance optimization: start with a correct-but-naive
-CUDA kernel, profile it, find the actual bottleneck, fix that specific
-bottleneck with shared memory, and measure the difference honestly.
+From-scratch C++/CUDA brute-force vector search (L2 & cosine) — a GPU counterpart to CPU FAISS retrieval.
+
+[![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)](https://isocpp.org/)
+[![CUDA](https://img.shields.io/badge/CUDA-GPU-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
+[![PyTorch](https://img.shields.io/badge/PyTorch-Extension-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![FAISS](https://img.shields.io/badge/Baseline-FAISS-0A66C2)](https://github.com/facebookresearch/faiss)
+[![Scale](https://img.shields.io/badge/Benchmark-10K%E2%80%931M%20vectors-success)](#results)
+
+**Personal project** by [@amberfxy](https://github.com/amberfxy) (**Amber Fan**)  
+Companion to the [Financial Market Intelligence RAG](https://github.com/amberfxy/financial-market-intelligence-rag) retrieval path
+
+</div>
+
+---
+
+Focused GPU engineering: start from a correct-but-naive CUDA kernel, identify the bottleneck, apply **shared-memory tiling**, and measure honestly against single-thread CPU, OpenMP, and FAISS (`IndexFlatL2`) — not a production vector database.
 
 ## Why this project exists
 
-My existing RAG project uses FAISS's CPU implementation for vector
-retrieval. This project answers a narrower question: what does it take to
-move that same brute-force search onto a GPU by hand, and where does the
-performance actually come from? The goal is depth on one well-understood
-optimization (shared memory tiling to eliminate redundant global memory
-reads), not breadth across every possible GPU trick.
+The RAG system uses FAISS on CPU for retrieval. This repo asks a narrower question: what does it take to move brute-force distance search onto a GPU by hand, and where does the speedup come from? Depth on one clear optimization (shared-memory tiling to cut redundant global reads), not every GPU trick.
 
 ## Architecture
 
