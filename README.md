@@ -212,11 +212,18 @@ paper over)
 
 ## Future work
 
-- **Block-per-vector shared-memory reduction** (optional next kernel): one
-  block owns one candidate, threads split the embedding dimension, reduce
-  partial squared distances in shared memory. Improves coalescing along
-  `dim`; may or may not win at large `N` with modest `dim` (e.g. 384) --
-  decide with Colab variant A/B timings, not assumptions.
+- **Block-per-vector shared-memory reduction** (optional next kernel + learning
+  experiment): one block owns one candidate; threads split the embedding
+  dimension, write partial squared distances to shared memory, then reduce
+  to one distance. Goal: better coalescing along `dim` vs today's
+  one-thread-per-vector kernels. Treat as an A/B study on Colab (naive vs
+  shared-query vs block-reduction) at `dim=384` and `dim=1024` -- it may
+  or may not win at large `N` with modest `dim`; let timings decide.
+  - **Correctness for that kernel** (not yet needed for current shared-query):
+    cover `dim` values that are not multiples of the block/warp size, and
+    partial-warp reduction tails. (Today's `test_correctness_gpu` already
+    covers non-multiple **dataset** sizes such as `n=257` for the existing
+    kernels; block-reduction needs the analogous checks on **dimension**.)
 - Candidate-vector tiling (full GEMM-style shared-memory blocking).
 - Batch multiple queries per kernel launch instead of one query at a time.
 - **Optional** deeper profiling with Nsight Compute if you have it; with
