@@ -25,7 +25,14 @@ echo "=== bench_runner dim=${DIM} queries=${QUERIES} -> ${CSV} ==="
 OMP_NUM_THREADS="$(nproc)" ./build/bench_runner "$DIM" "$QUERIES" "$CSV"
 
 echo "=== FAISS CPU IndexFlatL2 baseline ==="
+# Do not abort the script if FAISS skips/OOM on large N x dim (common on Colab).
+set +e
 python3 scripts/faiss_baseline.py --dim "$DIM" --queries "$QUERIES" --csv "$CSV"
+faiss_rc=$?
+set -e
+if [[ "$faiss_rc" -ne 0 ]]; then
+  echo "FAISS baseline exited with code ${faiss_rc}; continuing to plot CPU/GPU rows."
+fi
 
 echo "=== plot ==="
 python3 scripts/plot_results.py --csv "$CSV" --dim "$DIM" --out "$CHART"

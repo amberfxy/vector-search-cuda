@@ -268,26 +268,29 @@ because this `bench_runner` path re-transfers the full dataset every query.
 
 ### dim=1024 (BGE-large width)
 
-The companion Financial RAG uses **BGE-large** embeddings (**1024-d**).
-Primary numbers above use `dim=384` (common smaller embedding width). On the
-same Colab T4, after a CUDA build:
-
-```bash
-bash scripts/run_dim_benchmark.sh 1024 50
-# equivalent manual steps:
-# OMP_NUM_THREADS=$(nproc) ./build/bench_runner 1024 50 results/benchmark_dim1024.csv
-# python3 scripts/faiss_baseline.py --dim 1024 --queries 50 --csv results/benchmark_dim1024.csv
-# python3 scripts/plot_results.py --csv results/benchmark_dim1024.csv --dim 1024 \
-#   --out results/latency_chart_dim1024.png
-```
-
-Fill the table below after that Colab run (kernel-only GPU columns):
+Same Colab **Tesla T4**, `dim=1024` (BGE-large width), 50 queries/size.
+GPU columns are **kernel-only**. FAISS is CPU **`IndexFlatL2`**; the 1M
+FAISS point was skipped on Colab (process killed / RAM) because a 1M×1024
+float32 store alone is ~4 GB before index overhead.
 
 | Dataset size | CPU single-thread | CPU OpenMP | GPU naive (kernel) | GPU tiled (kernel) | FAISS CPU IndexFlatL2 |
 |---|---|---|---|---|---|
-| 10,000    | *pending Colab* | | | | |
-| 100,000   | | | | | |
-| 1,000,000 | | | | | |
+| 10,000    | 15.5 ms | 8.11 ms | 0.60 ms | 0.38 ms | 11.2 ms |
+| 100,000   | 156 ms | 86.4 ms | 6.40 ms | 7.27 ms | 123 ms |
+| 1,000,000 | 1448 ms | 893 ms | 65.2 ms | 66.6 ms | *(OOM on Colab)* |
+
+Speedup, tiled vs. naive GPU (kernel, 10K): **1.6×**
+Speedup, tiled GPU vs. OpenMP (kernel, 1M): **13×**
+
+Same pattern as dim=384: query tiling helps most at smaller `N`; at 100K–1M
+naive ≈ tiled because candidate traffic dominates. CSV/chart:
+`results/benchmark_dim1024.csv`, `results/latency_chart_dim1024.png`.
+
+```bash
+bash scripts/run_dim_benchmark.sh 1024 50
+```
+
+![latency chart dim=1024](results/latency_chart_dim1024.png)
 
 ### PyTorch extension (device-resident tensors)
 
