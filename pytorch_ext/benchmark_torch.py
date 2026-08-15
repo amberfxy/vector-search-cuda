@@ -9,19 +9,19 @@ Honest expectation, stated up front rather than discovered after writing a
 misleading bullet point: torch.cdist and F.cosine_similarity are backed by
 cuBLAS/highly-tuned CUDA kernels that Meta's PyTorch team has spent years
 optimizing. A hand-written kernel from a single optimization pass (shared
-memory tiling on the query vector only) is NOT expected to beat them --
-and if it does on some shape, that's more likely an artifact of a
-specific case than a general win. The point of this benchmark is not "my
-kernel beats PyTorch's" -- it's to have a real, measured number for
-"how close does a hand-rolled kernel with one specific optimization get to
-a production-grade library implementation," which is exactly the kind of
-comparison a DevTech engineer would be asked to reason about.
+memory tiling on the query vector only) is NOT expected to beat them in
+general -- and if it does on some shape, treat that as a measured data
+point for that T4 / dtype / dim / device-resident setup, not a blanket win.
+The point is to have a real number for "how close does a hand-rolled kernel
+with one specific optimization get to a production-grade library op."
 
-Run with: python benchmark_torch.py
+Run with:
+    python benchmark_torch.py
+    python benchmark_torch.py --dim 1024
 """
+import argparse
 import csv
 import os
-import time
 import torch
 import torch.nn.functional as F
 
@@ -30,7 +30,6 @@ import vector_search_torch as vst
 RESULTS_CSV = "../results/benchmark_torch.csv"
 NUM_QUERIES = 20
 DATASET_SIZES = [10_000, 100_000, 1_000_000]
-DIM = 384
 
 
 def timed_gpu(fn, num_repeats):
@@ -71,30 +70,36 @@ def bench_one_size(n, dim, num_queries):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dim", type=int, default=384,
+                        help="Embedding dim (use 1024 to match BGE-large).")
+    parser.add_argument("--queries", type=int, default=NUM_QUERIES)
+    parser.add_argument("--csv", default=RESULTS_CSV)
+    args = parser.parse_args()
+
     if not torch.cuda.is_available():
         print("No CUDA device available -- this benchmark requires a GPU.")
         return
 
-    write_header = not os.path.exists(RESULTS_CSV)
-    os.makedirs(os.path.dirname(RESULTS_CSV), exist_ok=True)
+    write_header = not os.path.exists(args.csv)
+    os.makedirs(os.path.dirname(args.csv) or ".", exist_ok=True)
 
-    with open(RESULTS_CSV, "a", newline="") as f:
+    with open(args.csv, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
             writer.writerow(["method", "num_vectors", "dim", "avg_latency_ms"])
 
         for n in DATASET_SIZES:
-            print(f"\n=== num_vectors = {n}, dim = {DIM} ===")
-            results = bench_one_size(n, DIM, NUM_QUERIES)
+            print(f"\n=== num_vectors = {n}, dim = {args.dim} ===")
+            results = bench_one_size(n, args.dim, args.queries)
             for method, avg_ms in results.items():
                 print(f"{method:<28} {avg_ms:.4f} ms/query")
-                writer.writerow([method, n, DIM, avg_ms])
+                writer.writerow([method, n, args.dim, avg_ms])
 
-    print(f"\nResults appended to {RESULTS_CSV}")
-    print("Merge with the main results/benchmark.csv and re-run "
-          "scripts/plot_results.py to include these on the same chart, "
-          "or plot separately -- your call depending on how you want to "
-          "present 'custom kernel vs. PyTorch' vs. 'GPU vs. CPU'.")
+    print(f"\nResults appended to {args.csv}")
+    print("Plot with: python3 ../scripts/plot_results.py "
+          f"--csv {args.csv} --dim {args.dim} "
+          "--out ../results/latency_chart_torch.png")
 
 
 if __name__ == "__main__":

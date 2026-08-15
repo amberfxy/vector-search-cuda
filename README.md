@@ -17,11 +17,11 @@ Companion to the [Financial Market Intelligence RAG](https://github.com/amberfxy
 
 ---
 
-Focused GPU engineering: start from a correct-but-naive CUDA kernel, identify the bottleneck, apply **shared-memory tiling**, and measure honestly against single-thread CPU, OpenMP, and FAISS (`IndexFlatL2`) — not a production vector database.
+Focused GPU engineering: start from a correct-but-naive CUDA kernel, apply **shared-memory query tiling**, and measure honestly against single-thread CPU, OpenMP, and **FAISS CPU `IndexFlatL2`** (exact brute-force — not IVF/HNSW) — not a production vector database.
 
 ## Why this project exists
 
-The RAG system uses FAISS on CPU for retrieval. This repo asks a narrower question: what does it take to move brute-force distance search onto a GPU by hand, and where does the speedup come from? Depth on one clear optimization (shared-memory tiling to cut redundant global reads), not every GPU trick.
+The companion RAG system retrieves with **FAISS on CPU** (`IndexFlatL2`). This repo asks a narrower question: what does it take to move that same class of brute-force distance search onto a GPU by hand, and where do measured speedups actually come from? Depth on one clear optimization (shared-memory tiling to cut redundant **query** global reads), not every GPU trick.
 
 ## Architecture
 
@@ -153,12 +153,12 @@ attempt at memory optimization.
 reads.** In the naive kernel, all `threads_per_block` threads in a block
 independently re-read the same `dim`-length query vector from global
 memory -- that's `threads_per_block`x more query-vector traffic than
-necessary. The tiled kernel loads the query vector into `__shared__` memory
-once per block (cooperative load + `__syncthreads()`), then every thread
-reads from shared memory instead. This was chosen as the first optimization
-because it's the single largest source of redundant traffic in this access
-pattern -- see "Future work" for the next optimization (candidate tiling)
-if you want to push further.
+necessary. The tiled kernel loads the query into `__shared__` once per
+block (cooperative load + `__syncthreads()`), then every thread reads
+from shared memory. That removes a clear source of *redundant* traffic;
+whether it dominates end-to-end latency depends on `N` and `dim` (at large
+`N`, unique candidate reads usually dominate -- see Results). Next steps
+(candidate tiling / block-per-vector reduction) are under Future work.
 
 **Dynamic shared memory sizing (`extern __shared__`), not a fixed-size
 array.** `dim` is a runtime parameter, not a compile-time constant, so
@@ -208,11 +208,17 @@ paper over)
 
 ## Future work
 
-- Candidate-vector tiling (the "full GEMM-style" version of the shared
-  memory optimization).
+- **Block-per-vector shared-memory reduction** (optional next kernel): one
+  block owns one candidate, threads split the embedding dimension, reduce
+  partial squared distances in shared memory. Improves coalescing along
+  `dim`; may or may not win at large `N` with modest `dim` (e.g. 384) --
+  decide with Colab variant A/B timings, not assumptions.
+- Candidate-vector tiling (full GEMM-style shared-memory blocking).
 - Batch multiple queries per kernel launch instead of one query at a time.
-- Profile with `nsight compute` / `nvprof` and report actual memory
-  throughput and occupancy numbers, not just wall-clock speedup.
+- **Optional** deeper profiling with Nsight Compute if you have it; with
+  **Colab-only** access, treat wall-clock vs `cudaEvent` kernel-only
+  timings across kernel variants and dims (384 vs 1024) as the evidence.
+  Nsight is not required to reason about transfer vs compute.
 - Keep the dataset resident on the device across queries (build the index
   once, query many times) to get a realistic serving-latency number.
   **Update: this is now addressed by `pytorch_ext/`**, which wraps the
@@ -228,15 +234,17 @@ paper over)
 
 **Hardware:** Google Colab **NVIDIA Tesla T4** (15 GB VRAM), driver reporting
 CUDA 13.0, project built with **nvcc CUDA toolkit 12.8**.
-**Workload:** `dim=384`, L2 distance unless noted.
-Main-table numbers are from a re-run averaged over **50 queries** per size
-(earlier 10-query runs showed Colab CPU OpenMP jitter at 100K).
-GPU columns below are **kernel-only** times (exclude host↔device transfer).
-Wall-clock numbers (with per-query re-upload) are in `results/benchmark.csv`
-and on the chart -- at 100K–1M they are dominated by transfer, as noted under
-Known limitations. FAISS CPU is from the same Colab T4 machine (separate script).
+**Workload (primary table):** `dim=384`, L2, averaged over **50 queries**
+per size (earlier 10-query runs showed Colab CPU OpenMP jitter at 100K).
+GPU columns are **kernel-only** (exclude host↔device transfer). Wall-clock
+(with per-query re-upload) is in `results/benchmark.csv` / the chart -- at
+100K–1M transfer dominates, as noted under Known limitations.
 
-| Dataset size | CPU single-thread | CPU OpenMP | GPU naive (kernel) | GPU tiled (kernel) | FAISS CPU |
+**FAISS baseline:** `faiss-cpu` **`IndexFlatL2`** (exact brute-force on CPU) on
+the same Colab machine -- not IVF/HNSW, and not a claim of beating “FAISS”
+in general. Script: `python3 scripts/faiss_baseline.py --dim 384 --queries 50`.
+
+| Dataset size | CPU single-thread | CPU OpenMP | GPU naive (kernel) | GPU tiled (kernel) | FAISS CPU IndexFlatL2 |
 |---|---|---|---|---|---|
 | 10,000    | 4.85 ms | 2.57 ms | 0.28 ms | 0.18 ms | 4.30 ms |
 | 100,000   | 50.8 ms | 37.0 ms | 2.68 ms | 2.78 ms | 45.0 ms |
@@ -247,18 +255,41 @@ Speedup, tiled GPU vs. multi-threaded CPU (kernel, 100K): **13×**
 Speedup, tiled GPU vs. multi-threaded CPU (kernel, 1M): **10×**
 
 At 100K–1M the tiled and naive kernels are essentially tied (~2.7 ms / ~28 ms):
-the shared-memory query tiling win is clearest at smaller sizes; at large `n`
-other costs dominate the kernel path. GPU wall-clock at 1M (~391–393 ms) is
-close to FAISS CPU / OpenMP because this benchmark re-transfers the full
-dataset every query.
+query tiling removes redundant query reads, but at large `N` **candidate**
+traffic dominates the kernel path, so the two kernels converge. GPU
+wall-clock at 1M (~391–393 ms) is close to FAISS CPU IndexFlatL2 / OpenMP
+because this `bench_runner` path re-transfers the full dataset every query.
 
 ![latency chart](results/latency_chart.png)
 
+### dim=1024 (BGE-large width)
+
+The companion Financial RAG uses **BGE-large** embeddings (**1024-d**).
+Primary numbers above use `dim=384` (common smaller embedding width). Re-run
+on the same Colab T4 with:
+
+```bash
+# from repo root, after building with CUDA
+OMP_NUM_THREADS=$(nproc) ./build/bench_runner 1024 50
+python3 scripts/faiss_baseline.py --dim 1024 --queries 50 --csv results/benchmark_dim1024.csv
+python3 scripts/plot_results.py --csv results/benchmark_dim1024.csv \
+  --dim 1024 --out results/latency_chart_dim1024.png
+```
+
+Fill the table below after that Colab run (kernel-only GPU columns):
+
+| Dataset size | CPU single-thread | CPU OpenMP | GPU naive (kernel) | GPU tiled (kernel) | FAISS CPU IndexFlatL2 |
+|---|---|---|---|---|---|
+| 10,000    | *pending Colab* | | | | |
+| 100,000   | | | | | |
+| 1,000,000 | | | | | |
+
 ### PyTorch extension (device-resident tensors)
 
-Same T4, custom tiled kernel wrapped as a PyTorch CUDA extension vs.
-`torch.cdist` / `F.cosine_similarity`. Timed with `torch.cuda.Event` on
-already-GPU-resident tensors (no host↔device transfer in the timed path).
+**Conditions:** same Colab **Tesla T4**; `float32`; `dim=384`; tensors already
+on GPU; timed with `torch.cuda.Event` (no H↔D copy in the timed path).
+Comparison is custom tiled op vs `torch.cdist` / `F.cosine_similarity` for
+this exact shape -- not a general “faster than PyTorch” claim.
 Raw numbers: `results/benchmark_torch.csv`.
 
 | Dataset size | custom L2 | `torch.cdist` L2 | custom cosine | `F.cosine_similarity` |
@@ -267,9 +298,13 @@ Raw numbers: `results/benchmark_torch.csv`.
 | 100,000   | 2.47 ms | 4.67 ms | 2.20 ms | 5.13 ms |
 | 1,000,000 | 20.8 ms | 48.8 ms | 20.9 ms | 50.9 ms |
 
-On this T4 run the custom kernel was faster than the built-in ops at every
-size tested (about **1.9×** vs `torch.cdist` at 100K, **2.4×** at 1M). That
-is a useful data point for this narrow brute-force distance pattern; it is
-not a claim that hand-written kernels beat PyTorch in general.
+On this T4 / shape the custom kernel was faster than the built-ins tested
+(about **1.9×** vs `torch.cdist` at 100K, **2.4×** at 1M). Useful for this
+narrow brute-force pattern only.
+
+```bash
+# optional: same comparison at BGE-large width
+cd pytorch_ext && python benchmark_torch.py --dim 1024
+```
 
 ![PyTorch extension latency chart](results/latency_chart_torch.png)

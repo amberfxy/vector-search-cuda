@@ -3,9 +3,13 @@
 // one CSV row per (method, num_vectors) pair to results/benchmark.csv.
 //
 // Usage:
-//   ./bench_runner [dim] [num_queries_averaged]
+//   ./bench_runner [dim] [num_queries_averaged] [csv_path]
 // (num_vectors is swept internally across 10K / 100K / 1M -- edit
 //  kDatasetSizes below to change that.)
+// Examples:
+//   ./bench_runner                  # dim=384, 10 queries, results/benchmark.csv
+//   ./bench_runner 1024 50          # BGE-large width, more stable averages
+//   ./bench_runner 1024 50 results/benchmark_dim1024.csv
 //
 // Build with CUDA (see CMakeLists.txt) to also exercise the naive and
 // tiled GPU kernels; without CUDA, only the two CPU baselines run, which
@@ -26,6 +30,7 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <sys/stat.h>
 
 using Clock = std::chrono::high_resolution_clock;
 
@@ -33,13 +38,22 @@ static double ms_since(Clock::time_point start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
+static void ensure_parent_dir(const std::string& path) {
+    const auto slash = path.find_last_of('/');
+    if (slash == std::string::npos) return;
+    const std::string dir = path.substr(0, slash);
+    if (!dir.empty()) {
+        mkdir(dir.c_str(), 0755);
+    }
+}
+
 int main(int argc, char** argv) {
-    const size_t dim = (argc > 1) ? std::atoi(argv[1]) : 384;   // matches common sentence-embedding dims
+    const size_t dim = (argc > 1) ? std::atoi(argv[1]) : 384;   // 384 common; 1024 = BGE-large
     const int num_queries = (argc > 2) ? std::atoi(argv[2]) : 10; // average over N queries per size
+    const std::string csv_path = (argc > 3) ? argv[3] : "results/benchmark.csv";
 
     const std::vector<size_t> kDatasetSizes = {10000, 100000, 1000000};
-
-    const std::string csv_path = "results/benchmark.csv";
+    ensure_parent_dir(csv_path);
     bool write_header = true;
     {
         std::ifstream check(csv_path);

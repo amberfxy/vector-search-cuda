@@ -3,15 +3,14 @@
 // own candidate vector from global memory. This is intentionally the
 // "obviously correct, obviously not optimized" baseline.
 //
-// Why this is slow (the thing to be able to explain in an interview):
+// Why this is a useful baseline (interview talking point):
 // If a block has 256 threads, all 256 threads redundantly re-read the same
-// `dim`-length query vector from global memory. Global memory bandwidth is
-// the scarce resource on GPUs -- L2 cache helps some, but this is still a
-// large amount of avoidable traffic. The tiled version (distance_tiled.cu)
-// fixes exactly this by loading the query vector into on-chip shared
-// memory ONCE per block, then having every thread in that block read from
-// shared memory (which is roughly two orders of magnitude faster than
-// global memory) instead of hitting global memory again.
+// `dim`-length query vector from global memory. That is avoidable traffic
+// (L2 may absorb some of it). The tiled version (distance_tiled.cu) loads
+// the query into on-chip shared memory ONCE per block, then threads read
+// from shared memory instead. How much that helps in wall/kernel time
+// depends on dataset size -- at large N, candidate reads dominate, so
+// measure rather than assume (see README Results).
 #include "distance_cuda.cuh"
 #include "cuda_timing.cuh"
 #include <cuda_runtime.h>

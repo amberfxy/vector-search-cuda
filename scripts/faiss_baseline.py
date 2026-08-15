@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
-"""FAISS CPU baseline, generating the same random data (same seed logic as
-the C++ side, conceptually) and timing brute-force L2 search so it can be
-plotted alongside the CPU/GPU C++ results as the "industry baseline" line.
+"""FAISS CPU baseline using IndexFlatL2 (exact brute-force L2 on CPU).
+
+This is the fair apples-to-apples line for this repo's exact L2 kernels --
+not IVF/HNSW, and not a claim about FAISS approximate indexes.
 
 Usage:
-    python3 scripts/faiss_baseline.py [--dim 384] [--queries 10]
+    python3 scripts/faiss_baseline.py [--dim 384] [--queries 50]
+    python3 scripts/faiss_baseline.py --dim 1024 --queries 50 --csv results/benchmark_dim1024.csv
 
 Requires: faiss-cpu, numpy (pip install faiss-cpu numpy)
-
-Note: this uses independently-generated random data rather than sharing
-the exact C++ RNG stream -- for a latency benchmark that's fine (the
-generating distribution is the same: normalized Gaussian vectors), but if
-you want an apples-to-apples correctness comparison (not just latency),
-dump the C++ VectorStore to disk with save_raw() and load that same file
-here with np.fromfile() instead of generating fresh random data.
 """
 import argparse
 import csv

@@ -35,9 +35,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", default="results/benchmark.csv")
     parser.add_argument("--out", default="results/latency_chart.png")
+    parser.add_argument(
+        "--dim",
+        type=int,
+        default=None,
+        help="If set, keep only rows with this embedding dim (e.g. 384 or 1024).",
+    )
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv)
+    if args.dim is not None:
+        if "dim" not in df.columns:
+            print(f"CSV {args.csv} has no 'dim' column; cannot filter.", file=sys.stderr)
+            sys.exit(1)
+        df = df[df["dim"] == args.dim]
+        if df.empty:
+            print(f"No rows with dim={args.dim} in {args.csv}", file=sys.stderr)
+            sys.exit(1)
 
     fig, ax = plt.subplots(figsize=(9, 6))
     for method, group in df.groupby("method"):
@@ -49,7 +63,10 @@ def main():
     ax.set_yscale("log")
     ax.set_xlabel("Number of vectors (dataset size)")
     ax.set_ylabel("Average query latency (ms, log scale)")
-    ax.set_title("Vector Similarity Search: Latency vs. Dataset Size")
+    title = "Vector Similarity Search: Latency vs. Dataset Size"
+    if args.dim is not None:
+        title += f" (dim={args.dim})"
+    ax.set_title(title)
     ax.legend(fontsize=8)
     ax.grid(True, which="both", linestyle="--", alpha=0.4)
 

@@ -9,17 +9,17 @@
 // Fix: have the block cooperatively load the query vector into `__shared__`
 // memory ONCE (each thread loads a slice, then __syncthreads() before anyone
 // reads), then have every thread read the query values from shared memory
-// (on-chip, ~100x lower latency than global memory) for the rest of the
-// kernel. This is the same "stage data on-chip, reuse across threads in the
-// block" idea behind tiled matrix multiplication / cuBLAS-style GEMM kernels.
+// (on-chip; typically much lower latency than an uncached global read) for
+// the rest of the kernel. Same "stage on-chip, reuse in the block" idea as
+// tiled GEMM -- but here only the query is staged, not a 2D candidate tile.
 //
 // What this does NOT yet do (documented honestly, not hidden):
 // It does not tile the CANDIDATE vectors into shared memory -- each thread
-// still streams its own candidate vector from global memory once. That's a
-// reasonable next optimization if you want to push further (see README
-// "Future work"), but the redundant-query-read is the single biggest win
-// for this access pattern, since it's read `threads_per_block` times in the
-// naive version vs. once per block here.
+// still streams its own candidate from global memory once. At large N that
+// candidate traffic dominates, so naive and tiled kernel times can look
+// similar (see README Results). Query staging is the first, explainable
+// optimization for this access pattern -- not a claim that it is always
+// the largest bottleneck in every measured configuration.
 #include "distance_cuda.cuh"
 #include "cuda_timing.cuh"
 #include <cuda_runtime.h>
