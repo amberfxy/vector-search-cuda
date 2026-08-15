@@ -130,11 +130,15 @@ pip install pandas matplotlib
 python3 scripts/plot_results.py
 ```
 
-### FAISS baseline (optional, for the "industry benchmark" comparison line)
+### FAISS CPU IndexFlatL2 baseline (optional comparison line)
+
+Exact brute-force on CPU via `faiss-cpu` -- fair comparison for this repo's
+exact L2 kernels; **not** IVF/HNSW and not a claim of beating “FAISS” broadly.
 
 ```bash
 pip install faiss-cpu numpy
-python3 scripts/faiss_baseline.py
+python3 scripts/faiss_baseline.py --dim 384 --queries 50
+python3 scripts/faiss_baseline.py --dim 1024 --queries 50 --csv results/benchmark_dim1024.csv
 ```
 
 ## Technical decisions log
@@ -265,15 +269,16 @@ because this `bench_runner` path re-transfers the full dataset every query.
 ### dim=1024 (BGE-large width)
 
 The companion Financial RAG uses **BGE-large** embeddings (**1024-d**).
-Primary numbers above use `dim=384` (common smaller embedding width). Re-run
-on the same Colab T4 with:
+Primary numbers above use `dim=384` (common smaller embedding width). On the
+same Colab T4, after a CUDA build:
 
 ```bash
-# from repo root, after building with CUDA
-OMP_NUM_THREADS=$(nproc) ./build/bench_runner 1024 50
-python3 scripts/faiss_baseline.py --dim 1024 --queries 50 --csv results/benchmark_dim1024.csv
-python3 scripts/plot_results.py --csv results/benchmark_dim1024.csv \
-  --dim 1024 --out results/latency_chart_dim1024.png
+bash scripts/run_dim_benchmark.sh 1024 50
+# equivalent manual steps:
+# OMP_NUM_THREADS=$(nproc) ./build/bench_runner 1024 50 results/benchmark_dim1024.csv
+# python3 scripts/faiss_baseline.py --dim 1024 --queries 50 --csv results/benchmark_dim1024.csv
+# python3 scripts/plot_results.py --csv results/benchmark_dim1024.csv --dim 1024 \
+#   --out results/latency_chart_dim1024.png
 ```
 
 Fill the table below after that Colab run (kernel-only GPU columns):
