@@ -379,4 +379,282 @@ Use when interview shifts to **system design**:
 
 ---
 
+## 20. GPT Study Guide — Full Answers (0–60 min mock interview)
+
+Timed walkthrough matching the NVIDIA first-round study plan. **English answers** are interview-ready; **中文** bullets are for quick review.
+
+---
+
+### 20.1 C++ Design (0–10 min)
+
+#### Why flat row-major `std::vector<float>`?
+
+**EN:** I store all N vectors in one contiguous `std::vector<float>` with row-major layout: vector `i` lives at `data[i * dim .. i * dim + dim - 1]`. That gives **CPU cache locality** when scanning candidates sequentially, and on GPU it enables a **single `cudaMemcpy`** for the whole corpus. FAISS, cuBLAS, and PyTorch tensors use the same layout.
+
+**中文:** 一块连续内存 → CPU 顺序扫友好 + GPU 一次 H2D。
+
+#### Why not `vector<vector<float>>`?
+
+**EN:** `vector<vector<float>>` scatters each vector across a **separate heap allocation**. That hurts CPU cache (pointer chasing), and on GPU you'd need **N separate transfers** or an array of device pointers — much worse than one flat buffer.
+
+**中文:** 内存碎片化、无法一次 memcpy、指针追踪差。
+
+#### How does VectorStore locate vector i?
+
+**EN:** `candidate_i` starts at `data + i * dimension`. `vectorAt(i)` returns exactly that pointer.
+
+```cpp
+return data_.data() + i * dim_;  // vectorAt(i)
+```
+
+#### CPU single-thread vs OpenMP?
+
+**EN:** Both call the same `l2_distance` / `cosine_similarity` per candidate. Single-thread runs a plain `for (i = 0; i < n; ++i)`. OpenMP adds `#pragma omp parallel for schedule(static)` so threads split **disjoint ranges of `i`**. Same math, different parallelism over **candidates**, not dimensions.
+
+**中文:** 算法相同；OpenMP 按 candidate 索引切分并行。
+
+#### Why no mutex on `out_scores[i]`?
+
+**EN:** Each iteration writes a **unique** `out_scores[i]` — no two threads share the same index. Threads only **read** the shared query vector (read-only). Disjoint writes + shared read-only input → no lock needed.
+
+```cpp
+// Each thread handles a disjoint slice -- writes to distinct out_scores[i]
+#pragma omp parallel for schedule(static)
+for (long long i = 0; i < n; ++i) { ... out_scores[i] = ...; }
+```
+
+#### L2 and Cosine formulas
+
+**L2:**
+\[
+\text{L2}(q, c) = \sqrt{\sum_{d=0}^{D-1} (q_d - c_d)^2}
+\]
+
+**Cosine:**
+\[
+\text{cos}(q, c) = \frac{q \cdot c}{\|q\|_2 \cdot \|c\|_2}
+\]
+
+**EN:** L2 accumulates squared differences, then **`sqrtf` at the end** — true L2, not squared L2. Cosine guards `denom > 0` to avoid division by zero on a zero vector.
+
+#### Why `partial_sort` for CPU top-k?
+
+**EN:** We only need the **top k**, not a full sort. `std::partial_sort` is **O(n log k)** vs full sort **O(n log n)**. For small k and large n (e.g. k=10, n=1M), that's the right trade-off.
+
+#### `.h` / `.cpp` / `.cu` / CMake roles
+
+| File | Role |
+|---|---|
+| **`.h` / `.hpp`** | Interfaces: `VectorStore`, `distance_cpu.hpp`, `distance_cuda.cuh` |
+| **`.cpp`** | CPU + host logic: `distance_cpu.cpp`, `bench_runner.cpp`, `binding.cpp` |
+| **`.cu`** | CUDA kernels + launchers: `distance_naive.cu`, `distance_tiled.cu` |
+| **`CMakeLists.txt`** | `check_language(CUDA)` → CPU-only or GPU build; static libs; `USE_CUDA` macro |
+
+**EN:** Headers define contracts. `.cpp` is host CPU and PyTorch binding. `.cu` is kernels only. CMake detects nvcc at configure time — same repo builds on laptop (CPU) or Colab (GPU) without source edits.
+
+---
+
+### 20.2 CUDA Mapping (10–20 min) — draw this
+
+```
+1 thread  → 1 candidate vector
+1 block   → 256 threads → up to 256 candidates
+grid      → ceil(N / 256) blocks
+```
+
+**Both kernels:**
+```cpp
+int i = blockIdx.x * blockDim.x + threadIdx.x;
+if (i >= numVectors) return;
+```
+
+| | **Naive** | **Shared-query (tiled)** |
+|---|---|---|
+| Query | Each thread reads `query[d]` from **global** | Block cooperatively loads query into **`__shared__`**, then reads `shared_query[d]` |
+| Candidate | Each thread streams its row from **global** | **Same** — still global |
+| Semantics | L2(q, cᵢ) | **Identical** L2(q, cᵢ) |
+
+**EN:** Parallel mapping is identical. The only optimization is **query staging in shared memory** — cooperative load, `__syncthreads`, then reuse. **Block-per-vector reduction is future work — NOT in the public repo.**
+
+**Whiteboard block:**
+```
+Block 0 (256 threads):
+  [cooperative load query → shared_query[0..D-1]]
+  __syncthreads()
+  thread 0 → dist(q, c_0)
+  thread 1 → dist(q, c_1)
+  ...
+```
+
+---
+
+### 20.3 Memory (20–30 min)
+
+#### Path A — Standalone wrapper
+
+```
+host vectors
+  → cudaMalloc(d_store, d_query, d_scores)
+  → H2D store + query
+  → kernel <<<>>>
+  → D2H scores
+  → cudaFree
+```
+
+**EN:** Every `batch_distance_*_cuda` call owns full alloc/transfer/free. Wall time includes all of that — intentionally unrealistic for serving but makes transfer vs compute visible.
+
+#### Path B — PyTorch extension
+
+```
+device-resident PyTorch tensors
+  → pybind11 C++ (validate device/dtype/shape/contiguous)
+  → data_ptr<float>()
+  → launch_l2_tiled <<<>>>
+  → torch::empty output on same device
+  → return Tensor (async on CUDA stream)
+```
+
+**EN:** No `cudaMalloc`/`cudaMemcpy` in the timed path — tensors already on GPU like real inference.
+
+#### Global vs Shared
+
+| Memory | Holds |
+|---|---|
+| **Global** | `store` (N×D), `query` (D), `out_scores` (N) |
+| **Shared** | `shared_query[D]` — per-block query copy |
+
+#### Must explain
+
+1. **Shared-query** removes redundant **query** global reads (256× per block in naive).
+2. **Candidates** still read from global — dominates at large N.
+3. **Strided access** — at fixed `d`, warp reads `store[i*D+d]` with stride D floats → poor coalescing.
+4. **Re-uploading full corpus** → wall ≫ kernel (1M: ~391 ms vs ~28 ms).
+5. **PyTorch extension** closer to serving — index resident, query many times.
+
+---
+
+### 20.4 Correctness (30–38 min)
+
+```
+CPU result = expected / ground truth
+GPU result = actual
+Pass if:  max_i |CPU[i] - GPU[i]| <= 1e-4
+```
+
+| Topic | Answer |
+|---|---|
+| Why not bit-identical? | Different scheduling, FMA fusion, sum order — use tolerance |
+| L2 includes sqrt? | Yes — `sqrtf(sum of squares)`, not squared L2 |
+| Cosine zero vector? | `denom > 0 ? dot/denom : 0` |
+| **N=100** | Fewer than one block (256 threads) — partial grid |
+| **N=257** | **N** not multiple of block size — tests `i >= num_vectors` guard; **NOT** testing D non-multiple |
+
+**Three assertions per size:**
+1. naive GPU vs CPU  
+2. tiled GPU vs CPU  
+3. naive GPU vs tiled GPU (catches bugs that cancel against CPU rounding)
+
+**Test pseudo-code:**
+```text
+FOR n IN [100, 257, 10000, 100000]:
+  cpu  = batch_distance_singlethread(store, query)
+  naive = batch_distance_naive_cuda(...)
+  tiled = batch_distance_tiled_cuda(...)
+  ASSERT max|cpu - naive| <= 1e-4
+  ASSERT max|cpu - tiled| <= 1e-4
+  ASSERT max|naive - tiled| <= 1e-4
+```
+
+---
+
+### 20.5 Benchmark (38–50 min)
+
+| Setting | Value |
+|---|---|
+| GPU | Tesla T4 (Colab) |
+| D | 384 (primary); also 1024 |
+| N | 10K / 100K / 1M |
+| Queries | **50 averaged** (README primary table) |
+| Warm-up | **None** |
+| Profiler | **No Nsight** |
+
+#### Two timing boundaries
+
+| | Tool | Includes |
+|---|---|---|
+| **Kernel-only** | `cudaEvent` | GPU compute only |
+| **Wrapper wall** | `std::chrono` | malloc + H2D + kernel + D2H + free |
+
+#### Core numbers (dim=384, kernel-only)
+
+| N | Naive | Tiled |
+|---|---|---|
+| 10K | **0.276 ms** | **0.178 ms** (~**1.55×**) |
+| 100K | 2.682 ms | 2.782 ms |
+| 1M | 28.329 ms | 28.395 ms |
+
+#### Must explain
+
+| Observation | Explanation |
+|---|---|
+| **10K ~1.55×** | Query redundancy is larger fraction of traffic at small N |
+| **100K/1M tie** | Each candidate still reads D unique floats from global |
+| Stride/cache/barrier | **Hypotheses only** — no Nsight proof |
+
+**EN one-liner:** "I report what I measured and separate hypotheses from evidence. Without Nsight, I won't claim I've proven the exact bottleneck."
+
+---
+
+### 20.6 Limitations (50–60 min) — say proactively
+
+| # | Limitation |
+|---|---|
+| 1 | Standalone wrapper **re-malloc + full H2D + free** every query |
+| 2 | Shared-query cuts **query** redundancy only — not candidate layout |
+| 3 | GPU top-k: Thrust **full `sort_by_key`**, not efficient selection |
+| 4 | No warm-up, median, p95, or variance |
+| 5 | **No Nsight** — performance reasons are hypotheses |
+| 6 | PyTorch bench may repeat **same query**, not diverse queries |
+| 7 | Direct **pybind11**, not `TORCH_LIBRARY` dispatcher op |
+| 8 | Launcher does **not** explicitly use PyTorch current CUDA stream |
+| 9 | Cosine zero/near-zero edge cases **under-tested** |
+| 10 | CUDA repo **not integrated** with Financial RAG CPU FAISS path |
+
+**EN closing:** "I'd rather name these limits upfront than have the interviewer find them."
+
+---
+
+### 20.7 60-second flash cards (闭卷)
+
+```
+Q: Core naive vs tiled difference?
+A: Query: global-per-thread vs shared-once-per-block. Candidate: same global.
+
+Q: vector i address?
+A: data + i * dim
+
+Q: Why no mutex in OpenMP?
+A: Disjoint writes to out_scores[i], read-only query.
+
+Q: L2 formula?
+A: sqrt(sum (q_d - c_d)^2)
+
+Q: 10K speedup reason?
+A: Query redundancy matters at small N.
+
+Q: 1M tie reason?
+A: Candidate global traffic dominates.
+
+Q: 257 tests what?
+A: N not multiple of block size — NOT D.
+
+Q: Wall vs kernel at 1M?
+A: ~391 ms vs ~28 ms — transfer dominates wall.
+
+Q: Block-per-vector reduction?
+A: Future work — NOT implemented.
+```
+
+---
+
 *Last aligned with repo README + Colab T4 results in `results/benchmark*.csv`.*
