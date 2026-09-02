@@ -9,3 +9,9 @@ pytorch_ext/build/
 pytorch_ext/*.egg-info/
 pytorch_ext/*.so
 .DS_Store
+
+# Personal interview / study notes — keep local only, never push to GitHub
+docs/NVIDIA_INTERVIEW_CANVAS.md
+docs/*INTERVIEW*
+docs/*interview*
+**/*_INTERVIEW_CANVAS*
