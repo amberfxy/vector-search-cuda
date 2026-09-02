@@ -657,4 +657,181 @@ A: Future work — NOT implemented.
 
 ---
 
+## 21. Architecture Map — File Hierarchy & Call Graph
+
+### 21.1 Directory tree (physical layout)
+
+```
+vector-search-cuda/
+├── include/                    # Headers (API layer)
+│   ├── vector_store.hpp        # Data container
+│   ├── distance_cpu.hpp        # CPU distance API + Metric enum
+│   ├── topk_cpu.hpp            # CPU top-k API
+│   ├── distance_cuda.cuh       # CUDA host wrapper declarations
+│   └── cuda_timing.cuh         # Shared kernel timing state
+│
+├── src/
+│   ├── cpu/                    # → static lib vector_search_cpu
+│   │   ├── distance_cpu.cpp
+│   │   └── topk_cpu.cpp
+│   ├── cuda/                   # → static lib vector_search_cuda
+│   │   ├── distance_naive.cu   # naive kernel + host wrapper
+│   │   ├── distance_tiled.cu   # shared-query kernel + host wrapper
+│   │   ├── cuda_timing.cu      # last_kernel_time_ms() impl
+│   │   └── topk_cuda.cu        # Thrust top-k (compiled, not wired in)
+│   └── benchmark/
+│       ├── bench_runner.cpp    # executable bench_runner
+│       └── data_gen.hpp        # numpy binary dump/load (header-only)
+│
+├── tests/
+│   ├── test_correctness.cpp
+│   └── test_correctness_gpu.cpp
+│
+├── scripts/                    # Python tools (separate processes)
+│   ├── plot_results.py
+│   ├── faiss_baseline.py
+│   └── run_dim_benchmark.sh
+│
+├── results/                    # benchmark CSV + charts
+│
+├── pytorch_ext/                # Second path: PyTorch extension (separate build)
+│   ├── setup.py
+│   ├── vector_search_torch.py
+│   ├── csrc/binding.cpp
+│   ├── csrc/tiled_kernels.cu   # kernel copy (not linked to src/cuda/)
+│   ├── test_correctness_torch.py
+│   ├── benchmark_torch.py
+│   └── demo_rerank.py
+│
+└── CMakeLists.txt
+```
+
+### 21.2 CMake link graph (build time)
+
+```
+CMakeLists.txt
+       │
+       ├── vector_search_cpu [STATIC]
+       │     distance_cpu.cpp, topk_cpu.cpp
+       │
+       └── vector_search_cuda [STATIC]  (if HAVE_CUDA)
+             distance_naive.cu, distance_tiled.cu,
+             cuda_timing.cu, topk_cuda.cu
+       │
+       ├── bench_runner        → cpu [+ cuda if USE_CUDA]
+       ├── test_correctness    → cpu
+       └── test_correctness_gpu → cpu + cuda
+
+pytorch_ext/setup.py  →  vector_search_torch_cpp.so  (independent of CMake)
+```
+
+### 21.3 Header include dependencies
+
+```
+vector_store.hpp          (leaf — no project includes)
+
+distance_cpu.hpp          ← vector_store.hpp
+topk_cpu.hpp              (standalone)
+distance_cuda.cuh         ← distance_cpu.hpp  (reuses Metric enum)
+cuda_timing.cuh           (standalone)
+
+distance_naive.cu / distance_tiled.cu  ← distance_cuda.cuh, cuda_timing.cuh
+cuda_timing.cu            ← cuda_timing.cuh, distance_cuda.cuh
+```
+
+### 21.4 Runtime call chain — Standalone path
+
+```
+VectorStore
+  vectorAt(i) → data + i * dim
+  raw()       → for cudaMemcpy
+
+CPU:
+  batch_distance_singlethread / openmp
+    → l2_distance / cosine_similarity per candidate i
+
+CUDA host wrapper (in .cu files):
+  batch_distance_naive_cuda / batch_distance_tiled_cuda
+    cudaMalloc → H2D → kernel <<<>>> → cudaEvent timing → D2H → cudaFree
+      naive:  l2_naive_kernel   (query from global per thread)
+      tiled:  l2_tiled_kernel   (query staged in __shared__)
+
+Timing:
+  distance_naive.cu ─┐
+  distance_tiled.cu ─┼→ set_last_kernel_time_ms() → cuda_timing.cu
+  bench_runner      ─┘   last_kernel_time_ms()
+
+bench_runner main:
+  for N in {10K, 100K, 1M}:
+    fillRandom → singlethread → openmp → naive_cuda → tiled_cuda → CSV
+```
+
+### 21.5 Runtime call chain — PyTorch path
+
+```
+demo_rerank.py / benchmark_torch.py
+  → vector_search_torch.py
+      l2_distance(query, store)
+        → vector_search_torch_cpp.tiled_l2_distance  (pybind11)
+            binding.cpp: check_inputs → torch::empty → data_ptr<float>()
+            → launch_l2_tiled() in tiled_kernels.cu
+                → l2_tiled_kernel <<<>>>
+      rerank() → torch.topk(scores, k)
+```
+
+| | Standalone `src/cuda/` | PyTorch `pytorch_ext/` |
+|---|---|---|
+| Kernel source | `distance_tiled.cu` | `tiled_kernels.cu` (adapted copy) |
+| Memory | malloc + H2D/D2H each call | device-resident `data_ptr` |
+| Entry | `batch_distance_tiled_cuda` | `tiled_l2_distance` (pybind) |
+| Build | CMake | `pip install -e .` |
+
+### 21.6 Whiteboard overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     APPLICATION LAYER                            │
+├──────────────────────┬──────────────────────────────────────────┤
+│  bench_runner        │  pytorch_ext/                            │
+│  test_correctness*   │  vector_search_torch.py → demo/benchmark   │
+└──────────┬───────────┴──────────────────┬───────────────────────┘
+           │                              │
+           ▼                              ▼
+┌──────────────────────┐       ┌──────────────────────┐
+│  CPU API             │       │  binding.cpp (pybind) │
+│  distance_cpu.cpp    │       │  → launch_l2_tiled()  │
+│  topk_cpu.cpp        │       └──────────┬───────────┘
+└──────────┬───────────┘                  │
+           │                              ▼
+           │                  ┌──────────────────────┐
+           │                  │  tiled_kernels.cu     │
+           ▼                  └──────────────────────┘
+┌──────────────────────┐
+│  CUDA host wrappers   │
+│  distance_naive.cu    │──► l2_naive_kernel
+│  distance_tiled.cu    │──► l2_tiled_kernel (shared-query)
+│  cuda_timing.cu       │
+│  topk_cuda.cu (orphan)│──► thrust sort (not in main flow)
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│  vector_store.hpp     │  data[i*dim + d]
+└──────────────────────┘
+```
+
+### 21.7 Quick reference
+
+| Question | Answer |
+|---|---|
+| Bottom data structure? | `VectorStore` → flat `std::vector<float>` |
+| CPU/GPU share? | `Metric` enum, batch API contract, row-major layout |
+| Naive vs tiled difference? | Same host wrapper pattern, different `__global__` kernel |
+| Who launches kernel? | `.cu` host functions or `launch_l2_tiled` |
+| PyTorch → kernel? | Python → pybind → `data_ptr` → `<<<>>>` |
+| Who uses `topk_cuda.cu`? | **Nobody yet** — compiled but not called from bench/test |
+| Why `cuda_timing.cu` separate? | Avoid duplicate `last_kernel_time_ms` symbol at link time |
+| `data_gen.hpp` used? | Included by bench_runner; `save_raw`/`load_raw` not called yet |
+
+---
+
 *Last aligned with repo README + Colab T4 results in `results/benchmark*.csv`.*
