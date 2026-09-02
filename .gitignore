@@ -11,9 +11,7 @@ pytorch_ext/*.so
 .DS_Store
 
 # Personal interview / study notes — keep local only, never push to GitHub
-# docs/README.txt IS committed (setup instructions only)
 docs/NVIDIA_INTERVIEW_CANVAS.md
-docs/NVIDIA_INTERVIEW*.md
 docs/*INTERVIEW*
 docs/*interview*
 **/*_INTERVIEW_CANVAS*
