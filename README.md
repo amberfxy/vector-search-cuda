@@ -59,6 +59,9 @@ scripts/
   run_phase1_benchmark.sh  -- reproducible legacy vs resident matrix
 docs/
   BASELINE_ARCHITECTURE.md -- execution paths, measured vs suspected bottlenecks
+  KERNEL_AUDIT.md          -- measured facts vs hypotheses (pre-Nsight)
+  OPTIMIZATION_CANDIDATES.md -- warp/block-per-vector candidates (not shipped)
+  NSIGHT_PROFILING.md      -- Colab/T4 ncu workflow for resident kernel
 results/
   phase1_benchmark.csv     -- T4 legacy vs resident stage timings (source of truth)
   phase1_json/             -- per-config JSON from the same T4 run
@@ -123,7 +126,13 @@ cmake --build build -j
 ./build/test_correctness_gpu      # RUN FIRST on GPU — legacy + GpuVectorIndex vs CPU
 ./build/bench_runner              # original mean-latency sweep
 ./build/bench_harness --help      # Phase 1/4 stage timings + legacy vs resident
+./build/profile_kernel --help     # focused resident workload for Nsight Compute
 ```
+
+Kernel profiling (after residency, T4): see [`docs/NSIGHT_PROFILING.md`](docs/NSIGHT_PROFILING.md).
+Do **not** rewrite kernels until an Nsight report exists — audit/candidates in
+[`docs/KERNEL_AUDIT.md`](docs/KERNEL_AUDIT.md) and
+[`docs/OPTIMIZATION_CANDIDATES.md`](docs/OPTIMIZATION_CANDIDATES.md).
 
 `CMakeLists.txt` uses `check_language(CUDA)` so the same file builds either
 configuration without edits -- useful if you're developing on a laptop
@@ -356,8 +365,9 @@ paper over)
 - Candidate-vector tiling (full GEMM-style shared-memory blocking).
 - Batch multiple queries per kernel launch instead of one query at a time.
 - **Nsight Systems / Compute** on the resident path (kernel is now ~96% of
-  E2E at 1M×384) — measure bandwidth, occupancy, and access efficiency before
-  claiming a specific kernel bottleneck.
+  E2E at 1M×384) via `./build/profile_kernel` — see `docs/NSIGHT_PROFILING.md`.
+  Measure bandwidth, occupancy, and access efficiency before claiming a
+  specific kernel bottleneck or implementing warp/block-per-vector variants.
 - Pinned host memory / CUDA streams only if profiling shows remaining
   transfer/overlap opportunity after residency.
 - Hand-written bitonic / partial top-k as an alternative to Thrust full sort.

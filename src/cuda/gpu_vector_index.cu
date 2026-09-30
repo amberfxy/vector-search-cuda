@@ -1,5 +1,6 @@
 // Device-resident corpus index. Upload store once; reuse query/score buffers.
 #include "gpu_vector_index.cuh"
+#include "nvtx_ranges.hpp"
 #include <cuda_runtime.h>
 #include <chrono>
 #include <stdexcept>
@@ -117,36 +118,45 @@ void GpuVectorIndex::search(const float* h_query, Metric metric, float* h_out_sc
     CUDA_CHECK(cudaEventCreate(&ev0));
     CUDA_CHECK(cudaEventCreate(&ev1));
 
-    CUDA_CHECK(cudaEventRecord(ev0));
-    CUDA_CHECK(cudaMemcpy(d_query_, h_query, dim_ * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaEventRecord(ev1));
-    CUDA_CHECK(cudaEventSynchronize(ev1));
-    local.query_h2d_ms = event_ms(ev0, ev1);
-
-    CUDA_CHECK(cudaEventRecord(ev0));
-    if (kind == GpuKernelKind::Naive) {
-        if (metric == Metric::L2) {
-            launch_l2_naive_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
-        } else {
-            launch_cosine_naive_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
-        }
-    } else {
-        if (metric == Metric::L2) {
-            launch_l2_tiled_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
-        } else {
-            launch_cosine_tiled_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
-        }
+    {
+        NvtxRange r("query_h2d");
+        CUDA_CHECK(cudaEventRecord(ev0));
+        CUDA_CHECK(cudaMemcpy(d_query_, h_query, dim_ * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaEventRecord(ev1));
+        CUDA_CHECK(cudaEventSynchronize(ev1));
+        local.query_h2d_ms = event_ms(ev0, ev1);
     }
-    CUDA_CHECK(cudaEventRecord(ev1));
-    CUDA_CHECK(cudaEventSynchronize(ev1));
-    local.kernel_ms = event_ms(ev0, ev1);
 
-    CUDA_CHECK(cudaEventRecord(ev0));
-    CUDA_CHECK(cudaMemcpy(h_out_scores, d_scores_, num_vectors_ * sizeof(float),
-                          cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaEventRecord(ev1));
-    CUDA_CHECK(cudaEventSynchronize(ev1));
-    local.scores_d2h_ms = event_ms(ev0, ev1);
+    {
+        NvtxRange r("distance_kernel");
+        CUDA_CHECK(cudaEventRecord(ev0));
+        if (kind == GpuKernelKind::Naive) {
+            if (metric == Metric::L2) {
+                launch_l2_naive_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
+            } else {
+                launch_cosine_naive_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
+            }
+        } else {
+            if (metric == Metric::L2) {
+                launch_l2_tiled_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
+            } else {
+                launch_cosine_tiled_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
+            }
+        }
+        CUDA_CHECK(cudaEventRecord(ev1));
+        CUDA_CHECK(cudaEventSynchronize(ev1));
+        local.kernel_ms = event_ms(ev0, ev1);
+    }
+
+    {
+        NvtxRange r("scores_d2h");
+        CUDA_CHECK(cudaEventRecord(ev0));
+        CUDA_CHECK(cudaMemcpy(h_out_scores, d_scores_, num_vectors_ * sizeof(float),
+                              cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaEventRecord(ev1));
+        CUDA_CHECK(cudaEventSynchronize(ev1));
+        local.scores_d2h_ms = event_ms(ev0, ev1);
+    }
 
     CUDA_CHECK(cudaEventDestroy(ev0));
     CUDA_CHECK(cudaEventDestroy(ev1));

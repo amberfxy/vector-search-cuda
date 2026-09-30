@@ -58,6 +58,23 @@ if(HAVE_CUDA)
     # inherit CUDA include dirs and link against the runtime when they compile
     # host .cpp translation units that include CUDA headers.
     target_link_libraries(vector_search_cuda PUBLIC CUDA::cudart)
+
+    # Optional NVTX ranges (no-op macros if unavailable). Never required for
+    # correctness or CPU-only builds.
+    set(VECTOR_SEARCH_HAS_NVTX FALSE)
+    if(TARGET CUDA::nvtx3)
+        target_link_libraries(vector_search_cuda PUBLIC CUDA::nvtx3)
+        set(VECTOR_SEARCH_HAS_NVTX TRUE)
+    elseif(TARGET CUDA::nvToolsExt)
+        target_link_libraries(vector_search_cuda PUBLIC CUDA::nvToolsExt)
+        set(VECTOR_SEARCH_HAS_NVTX TRUE)
+    endif()
+    if(VECTOR_SEARCH_HAS_NVTX)
+        target_compile_definitions(vector_search_cuda PUBLIC VECTOR_SEARCH_USE_NVTX=1)
+        message(STATUS "NVTX ranges enabled for GpuVectorIndex / profile_kernel")
+    else()
+        message(STATUS "NVTX not found — profile_kernel builds without NVTX ranges")
+    endif()
 endif()
 
 # --- Benchmark executables ---
@@ -78,6 +95,16 @@ else()
     message(STATUS "bench_harness built without CUDA — binary will exit with instructions")
 endif()
 
+# Focused resident workload for Nsight Compute (same GpuVectorIndex::search path).
+add_executable(profile_kernel src/benchmark/profile_kernel.cpp)
+target_link_libraries(profile_kernel PRIVATE vector_search_cpu)
+if(HAVE_CUDA)
+    target_compile_definitions(profile_kernel PRIVATE USE_CUDA)
+    target_link_libraries(profile_kernel PRIVATE vector_search_cuda)
+else()
+    message(STATUS "profile_kernel built without CUDA — binary will exit with instructions")
+endif()
+
 # --- Correctness tests ---
 enable_testing()
 add_executable(test_correctness tests/test_correctness.cpp)
@@ -91,5 +118,10 @@ if(HAVE_CUDA)
     add_executable(test_correctness_gpu tests/test_correctness_gpu.cpp)
     target_link_libraries(test_correctness_gpu PRIVATE vector_search_cpu vector_search_cuda)
     add_test(NAME correctness_gpu COMMAND test_correctness_gpu)
+
+    add_executable(test_profile_path_api tests/test_profile_path_api.cpp)
+    target_link_libraries(test_profile_path_api PRIVATE vector_search_cpu vector_search_cuda)
+    add_test(NAME profile_path_api COMMAND test_profile_path_api)
+
     message(STATUS "GPU correctness test enabled: run 'ctest' or './test_correctness_gpu' after building")
 endif()
