@@ -46,12 +46,13 @@ if(HAVE_CUDA)
         src/cuda/cuda_timing.cu
         src/cuda/distance_naive.cu
         src/cuda/distance_tiled.cu
+        src/cuda/gpu_vector_index.cu
         src/cuda/topk_cuda.cu
     )
     set_target_properties(vector_search_cuda PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 endif()
 
-# --- Benchmark executable ---
+# --- Benchmark executables ---
 add_executable(bench_runner src/benchmark/bench_runner.cpp)
 target_link_libraries(bench_runner PRIVATE vector_search_cpu)
 if(HAVE_CUDA)
@@ -59,11 +60,24 @@ if(HAVE_CUDA)
     target_link_libraries(bench_runner PRIVATE vector_search_cuda)
 endif()
 
+# Phase 1/4 harness: stage timings + legacy vs resident (CUDA-only meaningful).
+add_executable(bench_harness src/benchmark/bench_harness.cpp)
+target_link_libraries(bench_harness PRIVATE vector_search_cpu)
+if(HAVE_CUDA)
+    target_compile_definitions(bench_harness PRIVATE USE_CUDA)
+    target_link_libraries(bench_harness PRIVATE vector_search_cuda)
+else()
+    message(STATUS "bench_harness built without CUDA — binary will exit with instructions")
+endif()
+
 # --- Correctness tests ---
 enable_testing()
 add_executable(test_correctness tests/test_correctness.cpp)
 target_link_libraries(test_correctness PRIVATE vector_search_cpu)
 add_test(NAME correctness COMMAND test_correctness)
+
+add_executable(test_bench_stats tests/test_bench_stats.cpp)
+add_test(NAME bench_stats COMMAND test_bench_stats)
 
 if(HAVE_CUDA)
     add_executable(test_correctness_gpu tests/test_correctness_gpu.cpp)
