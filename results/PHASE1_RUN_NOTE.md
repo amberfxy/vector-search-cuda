@@ -1,20 +1,18 @@
 # Phase 1 / Phase 4 GPU run status
 
-This environment built **CPU-only** (no `nvcc` / no GPU). Therefore:
+**Hardware:** Google Colab **NVIDIA Tesla T4**  
+**Source of truth:** `results/phase1_benchmark.csv` + `results/phase1_json/`  
+**Harness:** `bench_harness` / `scripts/run_phase1_benchmark.sh`  
+**Config:** warmup=5, iterations=50, metric=l2, method=gpu_tiled, mode=both
 
-- `test_correctness` and `test_bench_stats` were executed and passed.
-- `bench_harness` and `test_correctness_gpu` require a CUDA build + GPU.
-- **No new GPU latency numbers were invented or committed.**
-
-## Commands to run on Colab T4 / A10 / A100
+Charts (generated, not hand-tuned numbers):
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-./build/test_correctness_gpu
-./scripts/run_phase1_benchmark.sh
-# then commit results/phase1_benchmark.csv and results/phase1_json/*.json
+python3 scripts/plot_phase4_results.py
 ```
 
-After a successful GPU run, update the README "Engineering story: device-resident index"
-**Result** subsection with actual measured p50/p95 and stage breakdowns from the CSV.
+→ `results/phase4_resident_vs_legacy.png`  
+→ `results/phase4_speedup.png`
+
+Historical baseline CSVs/charts (`benchmark.csv`, `latency_chart.png`, etc.) are
+preserved separately and were **not** overwritten by this run.

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "hardware_note": "Tesla T4 (sm_75, 14912 MiB)",
+  "runs": [
+    {"mode":"legacy","method":"gpu_tiled","num_vectors":10000,"dim":384,"metric":"l2","batch_size":1,"concurrency":1,"warmup":5,"iterations":50,"index_build_ms":0,"alloc_mean_ms":0.140022,"corpus_h2d_mean_ms":3.02776,"query_h2d_mean_ms":0.0109318,"kernel_mean_ms":0.336172,"kernel_p50_ms":0.335696,"kernel_p95_ms":0.336621,"kernel_p99_ms":0.354559,"scores_d2h_mean_ms":0.0256294,"free_mean_ms":0.807534,"e2e_mean_ms":4.40486,"e2e_p50_ms":4.39385,"e2e_p95_ms":4.49691,"e2e_p99_ms":4.56995,"e2e_min_ms":4.33414,"e2e_max_ms":4.63025,"qps_from_e2e_mean":227.022,"gpu_mem_used_bytes":112066560},
+    {"mode":"resident","method":"gpu_tiled","num_vectors":10000,"dim":384,"metric":"l2","batch_size":1,"concurrency":1,"warmup":5,"iterations":50,"index_build_ms":3.21272,"alloc_mean_ms":0,"corpus_h2d_mean_ms":0,"query_h2d_mean_ms":0.0103533,"kernel_mean_ms":0.331124,"kernel_p50_ms":0.331296,"kernel_p95_ms":0.332373,"kernel_p99_ms":0.333322,"scores_d2h_mean_ms":0.0228704,"free_mean_ms":0,"e2e_mean_ms":0.390875,"e2e_p50_ms":0.390014,"e2e_p95_ms":0.395985,"e2e_p99_ms":0.398281,"e2e_min_ms":0.387943,"e2e_max_ms":0.399162,"qps_from_e2e_mean":2558.36,"gpu_mem_used_bytes":130940928}
+  ]
+}
