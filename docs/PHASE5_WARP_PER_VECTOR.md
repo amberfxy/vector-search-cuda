@@ -41,9 +41,17 @@ Warp 0 (threads 0–31) at loop index `d`:
 Stride between consecutive lanes at fixed `d`: **`dim` floats = `dim*4` bytes**
 (1536 bytes at dim=384).
 
+At each dimension step, one warp therefore issues **32 scalar float loads** whose
+addresses are separated by **1536 bytes**. A single 128-byte L1 cache line (or
+32-byte sector) cannot satisfy more than one of those lanes’ candidate reads at
+that `d`. Over `dim=384` steps that is **32 × 384 = 12,288** candidate float
+loads per warp (plus query reads from shared memory in the tiled baseline).
+
 **HYPOTHESIS (not proven coalescing failure):** this strided pattern contributes
 to inefficient global/L1 traffic and the observed LG queue stalls. Warp-per-vector
-is the controlled test of that hypothesis.
+is the controlled test of that hypothesis. The profiler **proves** severe
+LG-memory instruction-queue stalls; it does **not** by itself prove a
+coalescing verdict.
 
 ## New memory-access mapping (warp-per-vector) — FACT (implementation)
 
@@ -61,6 +69,13 @@ At base `d0 = 0, 32, 64, …`:
 | 31 | d0+31 | `(vec*dim + d0+31)*4` (if `< dim`) |
 
 Stride between consecutive lanes: **1 float = 4 bytes** (contiguous within the row).
+
+At each base `d0`, one warp issues **up to 32 consecutive float loads** covering
+128 contiguous bytes of one candidate — a pattern that *can* map to a single
+cache-line transaction when all 32 lanes are active (tail iterations when
+`dim % 32 ≠ 0` activate fewer lanes). Query loads are also contiguous along dim
+(from global `query[]`; this experiment intentionally does **not** stage query
+in shared memory, so the A/B isolates the candidate mapping change).
 
 Partial L2 sums reduced with `__shfl_down_sync`; lane 0 writes `out_scores[vec]`.
 No atomics, no extra global temps, no shared memory in this experiment.
