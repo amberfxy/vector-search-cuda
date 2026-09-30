@@ -99,8 +99,12 @@ Kernel internals: `__syncthreads()` after shared-query load (tiled only).
 
 **Do not treat H1–H5 as facts until a report is committed.**
 
-## Next step
+## Nsight follow-up (MEASURED on T4 — see Phase 5 doc)
 
-Profile the **resident tiled L2** path at **1M × 384** with Nsight Compute
-(see `docs/NSIGHT_PROFILING.md`). Choose **one** optimization candidate from
-`docs/OPTIMIZATION_CANDIDATES.md` only after evidence exists.
+Occupancy was **not** the bottleneck (achieved ≈ 98.4%). Scheduler showed
+almost no eligible warps; LG memory instruction-queue stalls dominated.
+Warp-per-vector was implemented as a **separate** selectable variant
+(`--method warp`). Full write-up: [`PHASE5_WARP_PER_VECTOR.md`](PHASE5_WARP_PER_VECTOR.md).
+
+**Do not claim coalescing failure proven** — only LG-queue stall pathology
+and the access-pattern hypothesis above.

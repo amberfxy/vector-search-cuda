@@ -33,7 +33,8 @@ void usage(const char* argv0) {
         "  --num-vectors N     (default 1000000)\n"
         "  --dim D             (default 384)\n"
         "  --metric l2|cosine  (default l2)\n"
-        "  --method tiled|naive (default tiled)\n"
+        "  --method tiled|naive|warp  (default tiled)\n"
+        "                      warp = Phase 5A warp-per-vector L2 (resident)\n"
         "  --warmup W          (default 10)\n"
         "  --iterations I      (default 20)\n"
         "  --seed S            (default 123)\n"
@@ -79,8 +80,9 @@ Config parse(int argc, char** argv) {
             }
         } else if (!std::strcmp(argv[i], "--method")) {
             cfg.method_name = need("--method");
-            if (cfg.method_name != "tiled" && cfg.method_name != "naive") {
-                std::fprintf(stderr, "Unknown method (tiled|naive)\n");
+            if (cfg.method_name != "tiled" && cfg.method_name != "naive" &&
+                cfg.method_name != "warp") {
+                std::fprintf(stderr, "Unknown method (tiled|naive|warp)\n");
                 std::exit(2);
             }
         } else if (!std::strcmp(argv[i], "--warmup")) {
@@ -120,8 +122,13 @@ int main(int argc, char** argv) {
     return 1;
 #else
     Config cfg = parse(argc, argv);
-    const GpuKernelKind kind =
-        (cfg.method_name == "naive") ? GpuKernelKind::Naive : GpuKernelKind::Tiled;
+    if (cfg.method_name == "warp" && cfg.metric != Metric::L2) {
+        std::fprintf(stderr, "--method warp currently supports --metric l2 only\n");
+        return 2;
+    }
+    GpuKernelKind kind = GpuKernelKind::Tiled;
+    if (cfg.method_name == "naive") kind = GpuKernelKind::Naive;
+    else if (cfg.method_name == "warp") kind = GpuKernelKind::Warp;
 
     int device_count = 0;
     if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 1) {
@@ -186,7 +193,7 @@ int main(int argc, char** argv) {
     std::printf("=== PROFILE REGION END ===\n");
     std::printf(
         "Done. Filter ncu with kernel names: l2_tiled_kernel, cosine_tiled_kernel, "
-        "l2_naive_kernel, cosine_naive_kernel.\n");
+        "l2_naive_kernel, cosine_naive_kernel, l2_warp_per_vector_kernel.\n");
     return 0;
 #endif
 }

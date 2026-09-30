@@ -42,7 +42,7 @@ struct RunConfig {
     Metric metric = Metric::L2;
     std::string metric_name = "l2";
     std::string mode = "both";       // legacy | resident | both
-    std::string method = "tiled";    // naive | tiled | both
+    std::string method = "tiled";    // naive | tiled | warp | both | tiled,warp
     std::string csv_path = "results/phase1_benchmark.csv";
     std::string json_path = "results/phase1_benchmark.json";
     bool append_csv = true;
@@ -87,7 +87,8 @@ void print_usage(const char* argv0) {
         "  --iterations I        measured iters (default 50)\n"
         "  --metric l2|cosine    (default l2)\n"
         "  --mode legacy|resident|both  (default both)\n"
-        "  --method naive|tiled|both    (default tiled)\n"
+        "  --method naive|tiled|warp|both|tiled,warp  (default tiled)\n"
+        "                        warp = Phase 5A warp-per-vector L2 (resident)\n"
         "  --csv PATH            (default results/phase1_benchmark.csv)\n"
         "  --json PATH           (default results/phase1_benchmark.json)\n"
         "  --no-append           overwrite CSV instead of append\n",
@@ -284,9 +285,27 @@ void write_json(const std::string& path, const std::string& hardware_note,
 
 #ifdef USE_CUDA
 
+GpuKernelKind parse_kernel_kind(const std::string& method) {
+    if (method == "naive") return GpuKernelKind::Naive;
+    if (method == "tiled") return GpuKernelKind::Tiled;
+    if (method == "warp") return GpuKernelKind::Warp;
+    throw std::runtime_error("Unknown method: " + method);
+}
+
+const char* method_csv_name(const std::string& method) {
+    if (method == "naive") return "gpu_naive";
+    if (method == "tiled") return "gpu_tiled";
+    if (method == "warp") return "gpu_warp";
+    return method.c_str();
+}
+
 AggregateRow run_legacy(const RunConfig& cfg, const VectorStore& store,
-                         const VectorStore& queries, bool use_tiled) {
-    const std::string method = use_tiled ? "gpu_tiled" : "gpu_naive";
+                         const VectorStore& queries, const std::string& method) {
+    if (method == "warp") {
+        throw std::runtime_error(
+            "legacy mode does not support --method warp (use --mode resident)");
+    }
+    const std::string csv_method = method_csv_name(method);
     std::vector<float> scores(cfg.num_vectors);
     BenchStats e2e, kernel, alloc, corpus_h2d, query_h2d, d2h, freest;
 
@@ -294,7 +313,7 @@ AggregateRow run_legacy(const RunConfig& cfg, const VectorStore& store,
     for (int i = 0; i < total; ++i) {
         const float* q = queries.vectorAt(static_cast<size_t>(i % queries.numVectors()));
         CudaStageTimes st{};
-        if (use_tiled) {
+        if (method == "tiled") {
             batch_distance_tiled_cuda_staged(store.raw(), cfg.num_vectors, cfg.dim, q,
                                               cfg.metric, scores.data(), &st);
         } else {
@@ -311,19 +330,22 @@ AggregateRow run_legacy(const RunConfig& cfg, const VectorStore& store,
         freest.add(st.free_ms);
     }
 
-    return finalize_row("legacy", method, cfg, /*index_build_ms=*/0.0,
+    return finalize_row("legacy", csv_method, cfg, /*index_build_ms=*/0.0,
                         e2e, kernel, alloc, corpus_h2d, query_h2d, d2h, freest);
 }
 
 AggregateRow run_resident(const RunConfig& cfg, const VectorStore& store,
-                           const VectorStore& queries, bool use_tiled) {
-    const std::string method = use_tiled ? "gpu_tiled" : "gpu_naive";
+                           const VectorStore& queries, const std::string& method) {
+    if (method == "warp" && cfg.metric != Metric::L2) {
+        throw std::runtime_error("--method warp currently supports --metric l2 only");
+    }
+    const std::string csv_method = method_csv_name(method);
     GpuVectorIndex index(store.raw(), cfg.num_vectors, cfg.dim);
     const double build_ms = index.build_time_ms();
 
     std::vector<float> scores(cfg.num_vectors);
     BenchStats e2e, kernel, alloc, corpus_h2d, query_h2d, d2h, freest;
-    const GpuKernelKind kind = use_tiled ? GpuKernelKind::Tiled : GpuKernelKind::Naive;
+    const GpuKernelKind kind = parse_kernel_kind(method);
 
     const int total = cfg.warmup + cfg.iterations;
     for (int i = 0; i < total; ++i) {
@@ -340,8 +362,15 @@ AggregateRow run_resident(const RunConfig& cfg, const VectorStore& store,
         freest.add(st.free_ms);
     }
 
-    return finalize_row("resident", method, cfg, build_ms,
+    return finalize_row("resident", csv_method, cfg, build_ms,
                         e2e, kernel, alloc, corpus_h2d, query_h2d, d2h, freest);
+}
+
+std::vector<std::string> expand_methods(const std::string& method) {
+    if (method == "both") return {"naive", "tiled"};
+    if (method == "tiled,warp" || method == "warp,tiled") return {"tiled", "warp"};
+    if (method == "naive" || method == "tiled" || method == "warp") return {method};
+    throw std::runtime_error("Invalid --method " + method);
 }
 
 #endif // USE_CUDA
@@ -408,22 +437,25 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    std::vector<bool> methods_tiled;
-    if (cfg.method == "both") { methods_tiled = {false, true}; }
-    else if (cfg.method == "naive") { methods_tiled = {false}; }
-    else if (cfg.method == "tiled") { methods_tiled = {true}; }
-    else {
-        std::fprintf(stderr, "Invalid --method %s\n", cfg.method.c_str());
+    std::vector<std::string> methods;
+    try {
+        methods = expand_methods(cfg.method);
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "%s\n", ex.what());
         return 2;
     }
 
     std::vector<AggregateRow> rows;
     try {
         for (const auto& mode : modes) {
-            for (bool tiled : methods_tiled) {
+            for (const auto& method : methods) {
+                if (mode == "legacy" && method == "warp") {
+                    std::printf("skip: legacy + warp not supported\n");
+                    continue;
+                }
                 AggregateRow row = (mode == "legacy")
-                    ? run_legacy(cfg, store, queries, tiled)
-                    : run_resident(cfg, store, queries, tiled);
+                    ? run_legacy(cfg, store, queries, method)
+                    : run_resident(cfg, store, queries, method);
                 print_row(row);
                 rows.push_back(row);
             }

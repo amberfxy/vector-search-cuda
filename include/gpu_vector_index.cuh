@@ -19,7 +19,7 @@ struct CudaStageTimes {
     double e2e_ms = 0.0;
 };
 
-enum class GpuKernelKind { Naive, Tiled };
+enum class GpuKernelKind { Naive, Tiled, Warp };
 
 // Legacy path with per-stage cudaEvent timing (same lifecycle as
 // batch_distance_*_cuda: alloc + full corpus H2D every call).
@@ -40,6 +40,10 @@ void launch_l2_tiled_device(const float* d_store, const float* d_query,
                              size_t num_vectors, size_t dim, float* d_scores);
 void launch_cosine_tiled_device(const float* d_store, const float* d_query,
                                  size_t num_vectors, size_t dim, float* d_scores);
+
+// Phase 5A experiment: warp-per-vector L2 only (see docs/PHASE5_WARP_PER_VECTOR.md).
+void launch_l2_warp_device(const float* d_store, const float* d_query,
+                            size_t num_vectors, size_t dim, float* d_scores);
 
 class GpuVectorIndex {
 public:

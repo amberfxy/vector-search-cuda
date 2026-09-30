@@ -20,7 +20,10 @@ int main() {
     std::vector<float> scores(n);
     index.search(q.vectorAt(0), Metric::L2, scores.data(), GpuKernelKind::Tiled, nullptr);
     index.search(q.vectorAt(0), Metric::L2, scores.data(), GpuKernelKind::Naive, nullptr);
+    index.search(q.vectorAt(0), Metric::L2, scores.data(), GpuKernelKind::Warp, nullptr);
 
-    std::printf("passed: profile path API uses GpuVectorIndex::search (n=%zu dim=%zu)\n", n, dim);
+    std::printf("passed: profile path API uses GpuVectorIndex::search "
+                "(tiled/naive/warp; n=%zu dim=%zu)\n",
+                n, dim);
     return 0;
 }

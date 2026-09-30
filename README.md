@@ -42,11 +42,13 @@ src/
   cpu/topk_cpu.cpp
   cuda/distance_naive.cu  -- one-thread-per-candidate, no memory optimization
   cuda/distance_tiled.cu  -- shared-memory-tiled optimization (see below)
+  cuda/distance_warp.cu   -- Phase 5A: warp-per-vector L2 (experiment; not default)
   cuda/gpu_vector_index.cu -- upload corpus once; reuse buffers across searches
   cuda/topk_cuda.cu       -- optional: GPU top-k via Thrust
   cuda/cuda_timing.cu     -- shared timing state (see "why a separate file" below)
   benchmark/bench_runner.cpp -- original mean-latency sweep → results/benchmark.csv
-  benchmark/bench_harness.cpp -- Phase 1/4: stage timings + legacy vs resident
+  benchmark/bench_harness.cpp -- Phase 1/4/5: stage timings + legacy vs resident
+  benchmark/profile_kernel.cpp -- focused resident workload for Nsight
   benchmark/data_gen.hpp  -- raw float32 dump/load, compatible with numpy .tofile()
 tests/
   test_correctness.cpp    -- CPU correctness tests (see "What's verified" below)
@@ -57,10 +59,12 @@ scripts/
   plot_phase4_results.py  -- legacy vs resident charts from phase1 CSV
   faiss_baseline.py        -- FAISS CPU baseline, appends to the same CSV
   run_phase1_benchmark.sh  -- reproducible legacy vs resident matrix
+  run_phase5a_ab.sh        -- focused resident tiled vs warp A/B (1M×384 L2)
 docs/
   BASELINE_ARCHITECTURE.md -- execution paths, measured vs suspected bottlenecks
   KERNEL_AUDIT.md          -- measured facts vs hypotheses (pre-Nsight)
-  OPTIMIZATION_CANDIDATES.md -- warp/block-per-vector candidates (not shipped)
+  OPTIMIZATION_CANDIDATES.md -- warp/block-per-vector candidates
+  PHASE5_WARP_PER_VECTOR.md -- Phase 5A experiment (RESULT blank until T4 data)
   NSIGHT_PROFILING.md      -- Colab/T4 ncu workflow for resident kernel
 results/
   phase1_benchmark.csv     -- T4 legacy vs resident stage timings (source of truth)
@@ -156,12 +160,22 @@ Output schema: [`results/schema_phase1.md`](results/schema_phase1.md).
 
 # Full matrix (10K/100K/1M × 384/768/1024). Skips/fails cleanly on OOM or no GPU.
 ./scripts/run_phase1_benchmark.sh
+
+# Phase 5A focused A/B (resident tiled baseline vs warp-per-vector; L2 only).
+# Does NOT overwrite phase1_benchmark.csv. No performance claim until T4 CSV exists.
+./scripts/run_phase5a_ab.sh
+# Equivalent:
+# ./build/bench_harness --num-vectors 1000000 --dim 384 --metric l2 \
+#   --mode resident --method tiled,warp --warmup 5 --iterations 50 \
+#   --csv results/phase5a_ab_1m_d384.csv --json results/phase5a_ab_1m_d384.json \
+#   --no-append
 ```
 
 **Do not invent numbers** if this machine has no CUDA GPU — re-run on T4/A10/A100
 and commit the CSV/JSON from that run. README Results tables below are from the
 **original** Colab T4 `bench_runner` methodology (mean latency); Phase 1/4
 percentile + stage breakdowns live in `results/phase1_*` once produced.
+Phase 5A design notes: [`docs/PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md).
 
 ### Plotting results
 
@@ -364,12 +378,12 @@ paper over)
     kernels; block-reduction needs the analogous checks on **dimension**.)
 - Candidate-vector tiling (full GEMM-style shared-memory blocking).
 - Batch multiple queries per kernel launch instead of one query at a time.
-- **Nsight Systems / Compute** on the resident path (kernel is now ~96% of
-  E2E at 1M×384) via `./build/profile_kernel` — see `docs/NSIGHT_PROFILING.md`.
-  Measure bandwidth, occupancy, and access efficiency before claiming a
-  specific kernel bottleneck or implementing warp/block-per-vector variants.
-- Pinned host memory / CUDA streams only if profiling shows remaining
-  transfer/overlap opportunity after residency.
+- **Nsight re-profile of warp-per-vector** after focused A/B on T4 (same
+  SchedulerStats / WarpStateStats / MemoryWorkloadAnalysis sections) — see
+  `docs/NSIGHT_PROFILING.md` §9 and `docs/PHASE5_WARP_PER_VECTOR.md`.
+  Do not claim warp speedup until measured.
+- Pinned host memory / CUDA streams / float4 / block-per-vector only after
+  isolating one change at a time with evidence.
 - Hand-written bitonic / partial top-k as an alternative to Thrust full sort.
 
 - Wire `pytorch_ext/demo_rerank.py` up to a real sentence-embedding model

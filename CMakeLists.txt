@@ -50,6 +50,7 @@ if(HAVE_CUDA)
         src/cuda/cuda_timing.cu
         src/cuda/distance_naive.cu
         src/cuda/distance_tiled.cu
+        src/cuda/distance_warp.cu
         src/cuda/gpu_vector_index.cu
         src/cuda/topk_cuda.cu
     )

@@ -130,7 +130,13 @@ void GpuVectorIndex::search(const float* h_query, Metric metric, float* h_out_sc
     {
         NvtxRange r("distance_kernel");
         CUDA_CHECK(cudaEventRecord(ev0));
-        if (kind == GpuKernelKind::Naive) {
+        if (kind == GpuKernelKind::Warp) {
+            if (metric != Metric::L2) {
+                throw std::runtime_error(
+                    "GpuVectorIndex: GpuKernelKind::Warp currently supports L2 only");
+            }
+            launch_l2_warp_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
+        } else if (kind == GpuKernelKind::Naive) {
             if (metric == Metric::L2) {
                 launch_l2_naive_device(d_store_, d_query_, num_vectors_, dim_, d_scores_);
             } else {

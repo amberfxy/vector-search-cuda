@@ -137,3 +137,47 @@ Fallbacks that still help:
 With that, we pick **one** candidate from `OPTIMIZATION_CANDIDATES.md`
 (evidence-based), implement it as a **new** variant, and open a Phase 5
 benchmark CSV — without overwriting Phase 4 results.
+
+## 9. Phase 5A: re-profile warp-per-vector (after A/B shows improvement)
+
+Kernel symbol: **`l2_warp_per_vector_kernel`**. Same resident path:
+
+```bash
+# Focused normal-benchmark A/B first (not profiler durations):
+./scripts/run_phase5a_ab.sh
+# or:
+./build/bench_harness --num-vectors 1000000 --dim 384 --metric l2 \
+  --mode resident --method tiled,warp --warmup 5 --iterations 50 \
+  --csv results/phase5a_ab_1m_d384.csv --json results/phase5a_ab_1m_d384.json \
+  --no-append
+
+# Then Nsight on the warp kernel (same sections as baseline):
+ncu --target-processes all \
+    --kernel-name regex:l2_warp_per_vector_kernel \
+    --launch-count 20 \
+    --section SchedulerStats \
+    --section WarpStateStats \
+    --section MemoryWorkloadAnalysis \
+    --section Occupancy \
+    --section LaunchStats \
+    --section SpeedOfLight \
+    -o results/ncu_resident_warp_1m_d384_l2 \
+    ./build/profile_kernel \
+      --num-vectors 1000000 \
+      --dim 384 \
+      --metric l2 \
+      --method warp \
+      --warmup 10 \
+      --iterations 20
+```
+
+Compare against baseline (tiled) metrics documented in
+`docs/PHASE5_WARP_PER_VECTOR.md`:
+
+| Metric | Baseline (tiled, measured) | Warp (fill after T4) |
+|---|---|---|
+| Eligible warps / scheduler | ≈ 0.05 | *TBD* |
+| No eligible | ≈ 97.75% | *TBD* |
+| LG queue stall | ≈ 304 cycles / ~86.9% | *TBD* |
+
+Do **not** replace Phase 4 `phase1_benchmark.csv` numbers with profiler times.

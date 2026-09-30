@@ -1,12 +1,11 @@
-# Optimization candidates (not implemented yet)
+# Optimization candidates
 
-Controlled list for **after** Nsight evidence arrives. Do **not** implement
-all of these. Preserve legacy + current resident baseline; add optimized
-kernels as separate variants.
+Controlled list driven by Nsight evidence. Preserve legacy + resident tiled
+baseline; add optimized kernels as **separate** selectable variants.
 
 ## A. Current: thread-per-vector (baseline)
 
-**Status:** shipped (naive + shared-query tiled).
+**Status:** shipped (naive + shared-query tiled). Default remains tiled.
 
 | | |
 |---|---|
@@ -17,18 +16,23 @@ kernels as separate variants.
 | Correctness risk | Low (tested) |
 | Benchmark | `bench_harness --mode resident --method tiled` |
 
-## B. Warp-per-vector
+## B. Warp-per-vector (Phase 5A — implemented, not default)
 
-Threads in a warp cooperate on one candidate; warp shuffle reduction.
+**Status:** shipped as `GpuKernelKind::Warp` / `--method warp` (L2 only).
+See [`PHASE5_WARP_PER_VECTOR.md`](PHASE5_WARP_PER_VECTOR.md).
+
+Threads in a warp cooperate on one candidate; `__shfl_down_sync` reduction.
+**Do not claim speedup until T4 A/B CSV exists.**
 
 | | |
 |---|---|
-| Expected benefit | Better coalescing along `dim` if consecutive threads load consecutive dims |
+| Motivation (measured) | High occupancy but ~97.75% no-eligible; LG mem queue stall ~87% |
+| Hypothesis | Contiguous dim loads within a vector reduce LG-queue stalls |
 | Memory | Contiguous loads within a vector; fewer outstanding vectors per warp |
-| Tradeoffs | Fewer vectors in flight → possible occupancy / latency-hiding change; more complex indexing |
-| Applies | Best when `dim` is multiple of 32 (or handle tails) |
-| Correctness | Tail dims, warp divergence at partial warps |
-| Benchmark | New `GpuKernelKind::WarpPerVector` vs resident tiled; same N/dim matrix |
+| Tradeoffs | Fewer vectors in flight; no shared query staging in this experiment |
+| Applies | Handles `dim` not divisible by 32 via strided loop |
+| Correctness | Tail dims; reduction order vs 1e-4 tol |
+| Benchmark | `scripts/run_phase5a_ab.sh` or `--method tiled,warp` |
 
 ## C. Block-per-vector
 

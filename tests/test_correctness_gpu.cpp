@@ -98,6 +98,37 @@ void run_size_dim(size_t n, size_t dim, Metric metric, const char* metric_name) 
 
     report(std::string("legacy-tiled vs resident-tiled [") + metric_name + " n=" +
            std::to_string(n) + " d=" + std::to_string(dim) + "]", tiled, resident);
+
+    // Phase 5A: warp-per-vector is L2-only.
+    if (metric == Metric::L2) {
+        std::vector<float> resident_warp(n);
+        index.search(query, Metric::L2, resident_warp.data(), GpuKernelKind::Warp, nullptr);
+        report(std::string("resident-warp vs CPU [L2 n=") + std::to_string(n) +
+               " d=" + std::to_string(dim) + "]", cpu, resident_warp);
+        report(std::string("resident-tiled vs resident-warp [L2 n=") + std::to_string(n) +
+               " d=" + std::to_string(dim) + "]", resident, resident_warp);
+    }
+}
+
+// L2-only warp coverage for dims not divisible by 32 and small edge sizes.
+void run_warp_l2(size_t n, size_t dim) {
+    VectorStore store(n, dim);
+    store.fillRandom(/*seed=*/777, /*normalize=*/true);
+    VectorStore query_store(1, dim);
+    query_store.fillRandom(/*seed=*/888, /*normalize=*/true);
+    const float* query = query_store.vectorAt(0);
+
+    std::vector<float> cpu(n), warp(n), tiled(n);
+    batch_distance_singlethread(store, query, Metric::L2, cpu.data());
+
+    GpuVectorIndex index(store.raw(), n, dim);
+    index.search(query, Metric::L2, warp.data(), GpuKernelKind::Warp, nullptr);
+    index.search(query, Metric::L2, tiled.data(), GpuKernelKind::Tiled, nullptr);
+
+    report(std::string("warp vs CPU [L2 n=") + std::to_string(n) + " d=" +
+           std::to_string(dim) + "]", cpu, warp);
+    report(std::string("tiled vs warp [L2 n=") + std::to_string(n) + " d=" +
+           std::to_string(dim) + "]", tiled, warp);
 }
 
 void test_zero_vector_cosine() {
@@ -146,6 +177,19 @@ void test_repeated_resident_stable() {
     // Re-run first query — must match original result (no state corruption).
     index.search(qstore.vectorAt(0), Metric::L2, again.data(), GpuKernelKind::Tiled, nullptr);
     report("resident repeated-run stability (L2 n=1000)", first, again);
+
+    // Warp variant: same stability check.
+    std::vector<float> warp_first(n), warp_again(n);
+    index.search(qstore.vectorAt(0), Metric::L2, warp_first.data(), GpuKernelKind::Warp,
+                 nullptr);
+    for (int rep = 0; rep < 20; ++rep) {
+        index.search(qstore.vectorAt(static_cast<size_t>(rep % 3)), Metric::L2,
+                     warp_again.data(), GpuKernelKind::Warp, nullptr);
+    }
+    index.search(qstore.vectorAt(0), Metric::L2, warp_again.data(), GpuKernelKind::Warp,
+                 nullptr);
+    report("resident-warp repeated-run stability (L2 n=1000)", warp_first, warp_again);
+    report("resident-tiled vs warp after repeated runs (L2 n=1000)", first, warp_first);
 }
 
 void test_memory_stability_resident() {
@@ -206,8 +250,25 @@ void test_optional_large_n() {
                      need / (1024 * 1024), free_b / (1024 * 1024));
         return;
     }
-    std::printf("running: 1M-vector L2 validation (dim=384)...\n");
+    std::printf("running: 1M-vector L2 validation (dim=384) including warp...\n");
     run_size_dim(n, dim, Metric::L2, "L2");
+}
+
+void test_warp_dim_edges() {
+    // Dimensions not divisible by 32 (warp width) and small / mid sizes.
+    const std::vector<size_t> edge_dims = {1, 31, 32, 33, 383, 385};
+    const std::vector<size_t> edge_sizes = {1, 7, 32, 33, 100, 257};
+    for (size_t dim : edge_dims) {
+        for (size_t n : edge_sizes) {
+            run_warp_l2(n, dim);
+        }
+    }
+    // Standard dims at 10K / 100K (1M covered in test_optional_large_n when practical).
+    for (size_t dim : {static_cast<size_t>(384), static_cast<size_t>(768),
+                       static_cast<size_t>(1024)}) {
+        run_warp_l2(10000, dim);
+        run_warp_l2(100000, dim);
+    }
 }
 
 } // namespace
@@ -233,6 +294,9 @@ int main() {
             run_size_dim(n, dim, Metric::Cosine, "Cosine");
         }
     }
+
+    std::printf("--- Phase 5A warp-per-vector L2 edges ---\n");
+    test_warp_dim_edges();
 
     test_zero_vector_cosine();
     test_repeated_resident_stable();
