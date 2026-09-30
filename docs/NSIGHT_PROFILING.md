@@ -171,13 +171,14 @@ ncu --target-processes all \
       --iterations 20
 ```
 
-Compare against baseline (tiled) metrics documented in
-`docs/PHASE5_WARP_PER_VECTOR.md`:
+Measured comparison (documented in `docs/PHASE5_WARP_PER_VECTOR.md`):
 
-| Metric | Baseline (tiled, measured) | Warp (fill after T4) |
+| Metric | Baseline (tiled) | Warp |
 |---|---|---|
-| Eligible warps / scheduler | ≈ 0.05 | *TBD* |
-| No eligible | ≈ 97.75% | *TBD* |
-| LG queue stall | ≈ 304 cycles / ~86.9% | *TBD* |
+| Eligible warps / scheduler | ≈ 0.05 | ≈ 0.67 |
+| No eligible | ≈ 97.75% | ≈ 60.74% |
+| Dominant stall | LG queue ≈ 304 cycles / ~86.9% | scoreboard ≈ 12.3–12.4 cycles |
+| DRAM throughput | ≈ 44% | ≈ 97% |
+| Achieved occupancy | ≈ 98.4% | ≈ 92.2% |
 
 Do **not** replace Phase 4 `phase1_benchmark.csv` numbers with profiler times.

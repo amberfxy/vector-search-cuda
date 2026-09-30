@@ -99,12 +99,13 @@ Kernel internals: `__syncthreads()` after shared-query load (tiled only).
 
 **Do not treat H1–H5 as facts until a report is committed.**
 
-## Nsight follow-up (MEASURED on T4 — see Phase 5 doc)
+## Nsight follow-up + Phase 5A result (MEASURED on T4)
 
 Occupancy was **not** the bottleneck (achieved ≈ 98.4%). Scheduler showed
 almost no eligible warps; LG memory instruction-queue stalls dominated.
-Warp-per-vector was implemented as a **separate** selectable variant
-(`--method warp`). Full write-up: [`PHASE5_WARP_PER_VECTOR.md`](PHASE5_WARP_PER_VECTOR.md).
+Warp-per-vector (`--method warp`) reduced kernel mean **20.898 → 5.823 ms**
+and raised DRAM throughput ~44% → ~97% while occupancy fell slightly
+(~98.4% → ~92.2%). Full tables: [`PHASE5_WARP_PER_VECTOR.md`](PHASE5_WARP_PER_VECTOR.md).
 
-**Do not claim coalescing failure proven** — only LG-queue stall pathology
-and the access-pattern hypothesis above.
+The access-pattern hypothesis is **strongly supported**. Remaining stalls are
+scoreboard-dominated; DRAM is near peak.
