@@ -16,22 +16,19 @@ baseline; add optimized kernels as **separate** selectable variants.
 | Correctness risk | Low (tested) |
 | Benchmark | `bench_harness --mode resident --method tiled` |
 
-## B. Warp-per-vector (Phase 5A — implemented, not default)
+## B. Warp-per-vector (Phase 5A — measured win; not default)
 
 **Status:** shipped as `GpuKernelKind::Warp` / `--method warp` (L2 only).
+**Measured on T4 (1M×384 L2 resident):** kernel **20.898 → 5.823 ms (~3.59×)**;
+E2E **21.881 → 6.867 ms (~3.19×)**; DRAM ~44% → ~97%; eligible warps/scheduler
+~0.05 → ~0.67. Occupancy **fell** slightly (~98.4% → ~92.2%).
 See [`PHASE5_WARP_PER_VECTOR.md`](PHASE5_WARP_PER_VECTOR.md).
-
-Threads in a warp cooperate on one candidate; `__shfl_down_sync` reduction.
-**Do not claim speedup until T4 A/B CSV exists.**
 
 | | |
 |---|---|
 | Motivation (measured) | High occupancy but ~97.75% no-eligible; LG mem queue stall ~87% |
-| Hypothesis | Contiguous dim loads within a vector reduce LG-queue stalls |
-| Memory | Contiguous loads within a vector; fewer outstanding vectors per warp |
-| Tradeoffs | Fewer vectors in flight; no shared query staging in this experiment |
-| Applies | Handles `dim` not divisible by 32 via strided loop |
-| Correctness | Tail dims; reduction order vs 1e-4 tol |
+| Result | Access-pattern hypothesis strongly supported |
+| Remaining | Scoreboard stalls; DRAM near peak; L2-only; keep opt-in |
 | Benchmark | `scripts/run_phase5a_ab.sh` or `--method tiled,warp` |
 
 ## C. Block-per-vector

@@ -17,9 +17,16 @@ Companion to the [Financial Market Intelligence RAG](https://github.com/amberfxy
 
 ---
 
-Focused GPU engineering: start from a correct-but-naive CUDA kernel, apply **shared-memory query tiling**, measure honestly against CPU/OpenMP/FAISS, then fix the **measured end-to-end bottleneck** with a persistent device-resident index — not a production vector database.
+Focused GPU engineering: start from a correct-but-naive CUDA kernel, apply **shared-memory query tiling**, fix the **measured end-to-end bottleneck** with a persistent device-resident index, then improve the **distance kernel mapping** with warp-per-vector — not a production vector database.
 
-**T4 highlight (measured):** a persistent device-resident index reduced repeated-query end-to-end latency from **396.7 ms → 21.6 ms** on **1M × 384** embeddings (**18.4×**) and increased throughput from **2.5 → 46.3 QPS**. That gain is **E2E architecture** (eliminate repeated corpus H2D/alloc), not a claim that the distance kernel itself got 18× faster. Raw data: [`results/phase1_benchmark.csv`](results/phase1_benchmark.csv).
+**T4 highlights (measured; separate controlled experiments — do not multiply):**
+
+| Phase | What changed | 1M × 384 L2 result |
+|---|---|---|
+| **4 — residency** | Eliminate repeated corpus H2D/alloc | E2E **396.7 → 21.6 ms (~18.4×)**, QPS **2.5 → 46.3** ([`phase1_benchmark.csv`](results/phase1_benchmark.csv)) |
+| **5A — warp mapping** | One warp / candidate; contiguous dim loads | Kernel **20.898 → 5.823 ms (~3.59×)**, E2E **21.881 → 6.867 ms (~3.19×)**, QPS **45.7 → 145.6** ([`PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md)) |
+
+Phase 4 is **architectural** (resident index). Phase 5A is a **kernel access-pattern** change on the already-resident path. Nsight: DRAM ~44% → ~97%, eligible warps/scheduler ~0.05 → ~0.67; occupancy was **not** the win (~98.4% → ~92.2%).
 
 ## Why this project exists
 
@@ -42,7 +49,7 @@ src/
   cpu/topk_cpu.cpp
   cuda/distance_naive.cu  -- one-thread-per-candidate, no memory optimization
   cuda/distance_tiled.cu  -- shared-memory-tiled optimization (see below)
-  cuda/distance_warp.cu   -- Phase 5A: warp-per-vector L2 (experiment; not default)
+  cuda/distance_warp.cu   -- Phase 5A: warp-per-vector L2 (--method warp; not default)
   cuda/gpu_vector_index.cu -- upload corpus once; reuse buffers across searches
   cuda/topk_cuda.cu       -- optional: GPU top-k via Thrust
   cuda/cuda_timing.cu     -- shared timing state (see "why a separate file" below)
@@ -64,11 +71,12 @@ docs/
   BASELINE_ARCHITECTURE.md -- execution paths, measured vs suspected bottlenecks
   KERNEL_AUDIT.md          -- measured facts vs hypotheses (pre-Nsight)
   OPTIMIZATION_CANDIDATES.md -- warp/block-per-vector candidates
-  PHASE5_WARP_PER_VECTOR.md -- Phase 5A experiment (RESULT blank until T4 data)
+  PHASE5_WARP_PER_VECTOR.md -- Phase 5A warp-per-vector (measured T4 A/B + Nsight)
   NSIGHT_PROFILING.md      -- Colab/T4 ncu workflow for resident kernel
 results/
-  phase1_benchmark.csv     -- T4 legacy vs resident stage timings (source of truth)
+  phase1_benchmark.csv     -- T4 legacy vs resident stage timings (Phase 4 source of truth)
   phase1_json/             -- per-config JSON from the same T4 run
+  PHASE5_RUN_NOTE.md       -- Phase 5A measured summary + Colab artifact checklist
   phase4_*.png             -- charts generated from phase1_benchmark.csv
   benchmark.csv            -- historical Colab T4 mean-latency baseline
   schema_phase1.md         -- Phase 1/4 harness column definitions
@@ -99,8 +107,11 @@ single-thread-vs-OpenMP agreement, and top-k correctness.
 legacy tiled / resident tiled / resident naive vs CPU (absolute tol **1e-4**),
 plus zero-query cosine, repeated resident-search stability, GPU memory
 reclamation, and 1M×384 L2 validation. Phase 1/4 harness numbers are in
-`results/phase1_benchmark.csv`. Historical `bench_runner` / PyTorch tables
-remain under [Historical baseline results](#historical-baseline-results).
+`results/phase1_benchmark.csv`. Phase 5A warp-per-vector L2 A/B + Nsight are
+documented in [`docs/PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md)
+(CSV/JSON still to copy from Colab — see `results/PHASE5_RUN_NOTE.md`).
+Historical `bench_runner` / PyTorch tables remain under
+[Historical baseline results](#historical-baseline-results).
 
 ## Building
 
@@ -161,21 +172,14 @@ Output schema: [`results/schema_phase1.md`](results/schema_phase1.md).
 # Full matrix (10K/100K/1M × 384/768/1024). Skips/fails cleanly on OOM or no GPU.
 ./scripts/run_phase1_benchmark.sh
 
-# Phase 5A focused A/B (resident tiled baseline vs warp-per-vector; L2 only).
-# Does NOT overwrite phase1_benchmark.csv. No performance claim until T4 CSV exists.
+# Phase 5A focused A/B (resident tiled vs warp-per-vector; L2 only).
+# Does NOT overwrite phase1_benchmark.csv.
 ./scripts/run_phase5a_ab.sh
-# Equivalent:
-# ./build/bench_harness --num-vectors 1000000 --dim 384 --metric l2 \
-#   --mode resident --method tiled,warp --warmup 5 --iterations 50 \
-#   --csv results/phase5a_ab_1m_d384.csv --json results/phase5a_ab_1m_d384.json \
-#   --no-append
 ```
 
 **Do not invent numbers** if this machine has no CUDA GPU — re-run on T4/A10/A100
-and commit the CSV/JSON from that run. README Results tables below are from the
-**original** Colab T4 `bench_runner` methodology (mean latency); Phase 1/4
-percentile + stage breakdowns live in `results/phase1_*` once produced.
-Phase 5A design notes: [`docs/PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md).
+and commit CSV/JSON from that run. Phase 1/4: `results/phase1_*`. Phase 5A
+measured summary: [`docs/PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md).
 
 ### Plotting results
 
@@ -252,9 +256,13 @@ Persistent device-resident GpuVectorIndex
         ↓
 Correctness + stress validation (tol 1e-4)
         ↓
-Measured up to 18.36× E2E latency improvement on NVIDIA T4
+Measured up to 18.36× E2E latency improvement on NVIDIA T4 (Phase 4)
         ↓
 New bottleneck: CUDA distance kernel (~96% of resident E2E at 1M×384)
+        ↓
+Nsight: high occupancy, LG mem queue stalls, few eligible warps
+        ↓
+Warp-per-vector L2 mapping (~3.59× kernel / ~3.19× resident E2E on T4)
 ```
 
 ## Device-resident index optimization
@@ -302,8 +310,7 @@ Repeated-query E2E: **396.708 → 21.6077 ms (~18.36×)**.
 transfer/allocation — **not** “the kernel became 18× faster.”
 
 After residency, kernel ≈ 20.70 ms of 21.61 ms E2E (**~96%**), so the next
-optimization target is the distance kernel itself (Nsight profiling next —
-no coalescing/bandwidth claim until measured).
+optimization target was the distance kernel itself → Phase 5A.
 
 ### E2E speedup matrix (legacy mean / resident mean)
 
@@ -332,13 +339,52 @@ python3 scripts/plot_phase4_results.py   # regenerate charts from CSV
 | Higher single-stream QPS | Persistent VRAM (CSV `gpu_mem_used_bytes`; ~1.66 GB used during 1M×384 resident run) |
 | Stable repeated searches (stress-tested) | Not free for one-shot / tiny-N demos |
 
+## Phase 5A — warp-per-vector kernel mapping (measured)
+
+**Separate from Phase 4.** Same resident `GpuVectorIndex`, same N/dim/metric;
+only the distance kernel mapping changes (`--method tiled` vs `--method warp`).
+
+Full write-up: [`docs/PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md).
+
+### Normal A/B (T4, 1M × 384, L2, resident, warmup=5, iters=50)
+
+| Metric | tiled | warp |
+|---|---|---|
+| kernel mean | 20.898 ms | **5.823 ms** (~3.59×) |
+| kernel p50 / p95 / p99 | 20.760 / 21.870 / 22.075 | 5.822 / 5.828 / 5.834 |
+| E2E mean | 21.881 ms | **6.867 ms** (~3.19×) |
+| E2E p50 / p95 / p99 | 21.738 / 22.876 / 23.085 | 6.850 / 6.951 / 7.049 |
+| QPS | 45.70 | **145.63** |
+
+### Nsight (same workload class)
+
+| | tiled | warp |
+|---|---|---|
+| DRAM throughput | ≈ 44% | ≈ 97% |
+| Eligible warps / scheduler | ≈ 0.05 | ≈ 0.67 |
+| No eligible | ≈ 97.75% | ≈ 60.74% |
+| Cycles / issued instruction | ≈ 350 | ≈ 18.7 |
+| Dominant stall | LG mem queue (~87%) | scoreboard (~12.3 cycles) |
+| Achieved occupancy | ≈ 98.4% | ≈ 92.2% |
+
+Occupancy fell slightly while runtime improved — occupancy was not the limiter.
+Stalls were reduced, not eliminated; DRAM is now near peak.
+
+`--method warp` stays **opt-in** (L2 only; cosine still uses tiled/naive).
+Default remains tiled until cosine parity and a broader N×dim matrix are validated.
+
+```bash
+./scripts/run_phase5a_ab.sh   # regenerate A/B CSV (does not touch phase1_benchmark.csv)
+```
+
 ## Correctness / stress validation (T4)
 
 `./build/test_correctness_gpu` passed for dims **384 / 768 / 1024**, metrics
 **L2 + cosine**, implementations **legacy tiled / resident tiled / resident
-naive** vs CPU reference. Also passed: zero-query cosine edge case, repeated
-resident-search stability, GPU memory reclamation/stability, and **1M × 384
-L2** validation. Absolute per-element tolerance: **1e-4**.
+naive / resident warp (L2)** vs CPU reference, including dims **not** divisible
+by 32 (e.g. 383/385). Also passed: zero-query cosine edge case, repeated
+resident-search stability (tiled + warp), GPU memory reclamation/stability,
+and **1M × 384 L2** validation. Absolute per-element tolerance: **1e-4**.
 
 ## Known limitations (worth stating in an interview, not something to
 paper over)
@@ -364,26 +410,14 @@ paper over)
 
 ## Future work
 
-- **Block-per-vector shared-memory reduction** (optional next kernel + learning
-  experiment): one block owns one candidate; threads split the embedding
-  dimension, write partial squared distances to shared memory, then reduce
-  to one distance. Goal: better coalescing along `dim` vs today's
-  one-thread-per-vector kernels. Treat as an A/B study on Colab (naive vs
-  shared-query vs block-reduction) at `dim=384` and `dim=1024` -- it may
-  or may not win at large `N` with modest `dim`; let timings decide.
-  - **Correctness for that kernel** (not yet needed for current shared-query):
-    cover `dim` values that are not multiples of the block/warp size, and
-    partial-warp reduction tails. (Today's `test_correctness_gpu` already
-    covers non-multiple **dataset** sizes such as `n=257` for the existing
-    kernels; block-reduction needs the analogous checks on **dimension**.)
-- Candidate-vector tiling (full GEMM-style shared-memory blocking).
-- Batch multiple queries per kernel launch instead of one query at a time.
-- **Nsight re-profile of warp-per-vector** after focused A/B on T4 (same
-  SchedulerStats / WarpStateStats / MemoryWorkloadAnalysis sections) — see
-  `docs/NSIGHT_PROFILING.md` §9 and `docs/PHASE5_WARP_PER_VECTOR.md`.
-  Do not claim warp speedup until measured.
-- Pinned host memory / CUDA streams / float4 / block-per-vector only after
-  isolating one change at a time with evidence.
+- Commit Colab `phase5a_ab_1m_d384.csv` / `.json` when copied off Colab
+  (see `results/PHASE5_RUN_NOTE.md`).
+- Expand warp A/B matrix (10K/100K/1M × 384/768/1024) and optional cosine
+  warp variant before considering a default-method change.
+- Next kernel experiments only with new Nsight evidence (DRAM near peak;
+  scoreboard stalls remain): float4, block-per-vector, etc. — **one at a time**.
+- Batch multiple queries / streams / pinned host memory only if profiling
+  shows remaining transfer or overlap opportunity.
 - Hand-written bitonic / partial top-k as an alternative to Thrust full sort.
 
 - Wire `pytorch_ext/demo_rerank.py` up to a real sentence-embedding model
