@@ -42,6 +42,10 @@ if(HAVE_CUDA)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)  # covers Volta through Ampere; add 89/90 for Ada/Hopper if needed
 
+    # Provide CUDA::cudart (includes + link) to .cpp targets that include
+    # <cuda_runtime.h>. Do not hardcode toolkit paths — Colab/nvcc layouts vary.
+    find_package(CUDAToolkit REQUIRED)
+
     add_library(vector_search_cuda STATIC
         src/cuda/cuda_timing.cu
         src/cuda/distance_naive.cu
@@ -50,6 +54,10 @@ if(HAVE_CUDA)
         src/cuda/topk_cuda.cu
     )
     set_target_properties(vector_search_cuda PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    # PUBLIC so dependents (bench_harness, test_correctness_gpu, bench_runner)
+    # inherit CUDA include dirs and link against the runtime when they compile
+    # host .cpp translation units that include CUDA headers.
+    target_link_libraries(vector_search_cuda PUBLIC CUDA::cudart)
 endif()
 
 # --- Benchmark executables ---
