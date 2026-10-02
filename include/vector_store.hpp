@@ -3,6 +3,7 @@
 #include <random>
 #include <stdexcept>
 #include <cstring>
+#include <cmath>
 
 // VectorStore holds N vectors of dimension D in a single contiguous buffer,
 // row-major layout: vector i occupies data[i*dim ... i*dim + dim - 1].

@@ -17,7 +17,9 @@ Companion to the [Financial Market Intelligence RAG](https://github.com/amberfxy
 
 ---
 
-Focused GPU engineering: start from a correct-but-naive CUDA kernel, apply **shared-memory query tiling**, fix the **measured end-to-end bottleneck** with a persistent device-resident index, then improve the **distance kernel mapping** with warp-per-vector — not a production vector database.
+Focused GPU engineering: measurement-driven exact L2/cosine search as a
+**reusable CUDA library** (resident index, warp-per-vector kernel, PyTorch
+extension) — not a distributed vector database.
 
 **T4 highlights (measured; separate controlled experiments — do not multiply):**
 
@@ -26,7 +28,11 @@ Focused GPU engineering: start from a correct-but-naive CUDA kernel, apply **sha
 | **4 — residency** | Eliminate repeated corpus H2D/alloc | E2E **396.7 → 21.6 ms (~18.4×)**, QPS **2.5 → 46.3** ([`phase1_benchmark.csv`](results/phase1_benchmark.csv)) |
 | **5A — warp mapping** | One warp / candidate; contiguous dim loads | Kernel **20.898 → 5.823 ms (~3.59×)**, E2E **21.881 → 6.867 ms (~3.19×)**, QPS **45.7 → 145.6** ([`PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md)) |
 
-Phase 4 is **architectural** (resident index). Phase 5A is a **kernel access-pattern** change on the already-resident path. Nsight: DRAM ~44% → ~97%, eligible warps/scheduler ~0.05 → ~0.67; occupancy was **not** the win (~98.4% → ~92.2%).
+Production-oriented docs: [`docs/production-readiness.md`](docs/production-readiness.md) ·
+[`docs/architecture.md`](docs/architecture.md) ·
+[`docs/benchmark-methodology.md`](docs/benchmark-methodology.md) ·
+[`docs/performance-analysis.md`](docs/performance-analysis.md) ·
+[`docs/pytorch-integration.md`](docs/pytorch-integration.md).
 
 ## Why this project exists
 
@@ -113,9 +119,39 @@ documented in [`docs/PHASE5_WARP_PER_VECTOR.md`](docs/PHASE5_WARP_PER_VECTOR.md)
 Historical `bench_runner` / PyTorch tables remain under
 [Historical baseline results](#historical-baseline-results).
 
-## Building
+## Library API (resident index)
 
-### CPU-only (no GPU required)
+```cpp
+#include "gpu_vector_index.cuh"
+
+auto idx = GpuVectorIndex::build(h_store, N, dim /*, device=*/);
+std::vector<float> scores(N);
+idx.search(h_query, Metric::L2, scores.data(), GpuKernelKind::Warp);
+
+std::vector<float> batch_scores(Q * N);
+idx.search_batch(h_queries, Q, Metric::L2, batch_scores.data(), GpuKernelKind::Tiled);
+
+auto st = idx.stats();   // device name, bytes, capacities
+idx.reset();             // free GPU memory
+```
+
+`add()` is not supported (immutable corpus). Rebuild to change data.
+Errors (OOM, bad device, NaN query, unsupported warp+cosine) throw with diagnostics.
+
+### Build / test / regress
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build --output-on-failure          # CPU always; GPU if present
+./build/test_correctness_matrix                     # GPU correctness matrix
+./scripts/run_regression_suite.sh                   # machine-local CSV (does not overwrite Phase 4)
+./build/bench_batch --num-vectors 100000 --dim 384 --batch 32 --method warp
+```
+
+Supported toolchains: C++17, CMake ≥3.18, CUDA architectures `70;75;80;86` by default
+(Volta–Ampere). Document your `nvcc --version` with any new CSV.
+
 
 ```bash
 g++ -std=c++17 -O2 -fopenmp -I include -I src/benchmark \

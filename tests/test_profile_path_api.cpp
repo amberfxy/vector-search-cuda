@@ -22,8 +22,17 @@ int main() {
     index.search(q.vectorAt(0), Metric::L2, scores.data(), GpuKernelKind::Naive, nullptr);
     index.search(q.vectorAt(0), Metric::L2, scores.data(), GpuKernelKind::Warp, nullptr);
 
-    std::printf("passed: profile path API uses GpuVectorIndex::search "
-                "(tiled/naive/warp; n=%zu dim=%zu)\n",
+    // Batched API smoke
+    VectorStore qs(4, dim);
+    qs.fillRandom(44, true);
+    std::vector<float> batch_scores(4 * n);
+    index.search_batch(qs.raw(), 4, Metric::L2, batch_scores.data(), GpuKernelKind::Tiled,
+                       nullptr);
+    auto st = index.stats();
+    (void)st;
+    index.reset();
+
+    std::printf("passed: profile path API (search/search_batch/reset; n=%zu dim=%zu)\n",
                 n, dim);
     return 0;
 }

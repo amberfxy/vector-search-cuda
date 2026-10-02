@@ -25,23 +25,28 @@ def check_case(n, dim, seed):
     torch.manual_seed(seed)
     query = torch.randn(dim, device="cuda", dtype=torch.float32)
     store = torch.randn(n, dim, device="cuda", dtype=torch.float32)
+    queries = torch.randn(8, dim, device="cuda", dtype=torch.float32)
 
-    # --- L2 ---
-    custom_l2 = vst.l2_distance(query, store)
+    custom_l2 = vst.l2_distance(query, store, method="tiled")
+    warp_l2 = vst.l2_distance(query, store, method="warp")
     reference_l2 = torch.cdist(query.unsqueeze(0), store).squeeze(0)
     max_diff_l2 = (custom_l2 - reference_l2).abs().max().item()
+    max_diff_warp = (warp_l2 - reference_l2).abs().max().item()
 
-    # --- Cosine ---
     custom_cos = vst.cosine_similarity(query, store)
     reference_cos = F.cosine_similarity(query.unsqueeze(0), store)
     max_diff_cos = (custom_cos - reference_cos).abs().max().item()
 
-    ok_l2 = max_diff_l2 < TOLERANCE
-    ok_cos = max_diff_cos < TOLERANCE
+    batch = vst.l2_distance_batch(queries, store, method="tiled")
+    ref_batch = torch.cdist(queries, store)
+    max_diff_batch = (batch - ref_batch).abs().max().item()
 
-    print(f"n={n:>8} dim={dim:<4}  L2 max diff={max_diff_l2:.6f} [{'OK' if ok_l2 else 'FAIL'}]"
-          f"   cosine max diff={max_diff_cos:.6f} [{'OK' if ok_cos else 'FAIL'}]")
-    return ok_l2 and ok_cos
+    ok = all(d < TOLERANCE for d in (max_diff_l2, max_diff_warp, max_diff_cos, max_diff_batch))
+    print(
+        f"n={n:>8} dim={dim:<4}  tiledL2={max_diff_l2:.6f} warpL2={max_diff_warp:.6f} "
+        f"cos={max_diff_cos:.6f} batch={max_diff_batch:.6f} [{'OK' if ok else 'FAIL'}]"
+    )
+    return ok
 
 
 def main():
@@ -49,9 +54,7 @@ def main():
         print("No CUDA device available -- this test requires a GPU. Skipping.")
         sys.exit(0)
 
-    # Same boundary-case reasoning as the C++ GPU test: sizes smaller than
-    # one thread block, sizes that aren't clean multiples of the block size.
-    cases = [(100, 384), (257, 384), (10_000, 384), (100_000, 768)]
+    cases = [(100, 384), (257, 384), (383, 385), (10_000, 384), (100_000, 768)]
 
     all_ok = True
     for n, dim in cases:

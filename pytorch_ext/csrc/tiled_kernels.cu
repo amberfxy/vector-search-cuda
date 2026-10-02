@@ -87,4 +87,63 @@ void launch_cosine_tiled(const float* store, const float* query,
         store, query, num_vectors, dim, out_scores);
 }
 
+// Warp-per-vector L2 (same mapping as src/cuda/distance_warp.cu).
+__device__ inline float warp_reduce_sum(float v) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v += __shfl_down_sync(0xffffffffu, v, offset);
+    }
+    return v;
+}
+
+__global__ void l2_warp_per_vector_kernel(const float* __restrict__ store,
+                                           const float* __restrict__ query,
+                                           int64_t num_vectors, int64_t dim,
+                                           float* __restrict__ out_scores) {
+    const int lane = threadIdx.x & 31;
+    const int warp_in_block = threadIdx.x >> 5;
+    const int warps_per_block = blockDim.x >> 5;
+    const int64_t vec =
+        static_cast<int64_t>(blockIdx.x) * warps_per_block + warp_in_block;
+    if (vec >= num_vectors) return;
+
+    const float* candidate = store + vec * dim;
+    float partial = 0.0f;
+    for (int64_t d = lane; d < dim; d += 32) {
+        const float diff = query[d] - candidate[d];
+        partial += diff * diff;
+    }
+    const float total = warp_reduce_sum(partial);
+    if (lane == 0) out_scores[vec] = sqrtf(total);
+}
+
+void launch_l2_warp(const float* store, const float* query,
+                    int64_t num_vectors, int64_t dim, float* out_scores) {
+    const int threads_per_block = 256;
+    const int warps_per_block = threads_per_block / 32;
+    const int blocks = static_cast<int>(
+        (num_vectors + warps_per_block - 1) / warps_per_block);
+    l2_warp_per_vector_kernel<<<blocks, threads_per_block>>>(
+        store, query, num_vectors, dim, out_scores);
+}
+
+// Batched: queries [Q, dim], out [Q, N] — one tiled launch per query.
+void launch_l2_tiled_batch(const float* store, const float* queries,
+                            int64_t num_vectors, int64_t dim, int64_t num_queries,
+                            float* out_scores) {
+    for (int64_t q = 0; q < num_queries; ++q) {
+        launch_l2_tiled(store, queries + q * dim, num_vectors, dim,
+                        out_scores + q * num_vectors);
+    }
+}
+
+void launch_l2_warp_batch(const float* store, const float* queries,
+                           int64_t num_vectors, int64_t dim, int64_t num_queries,
+                           float* out_scores) {
+    for (int64_t q = 0; q < num_queries; ++q) {
+        launch_l2_warp(store, queries + q * dim, num_vectors, dim,
+                       out_scores + q * num_vectors);
+    }
+}
+
 } // namespace vector_search_torch

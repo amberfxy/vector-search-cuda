@@ -106,6 +106,13 @@ else()
     message(STATUS "profile_kernel built without CUDA — binary will exit with instructions")
 endif()
 
+# Batched resident search microbenchmark (CUDA-only).
+if(HAVE_CUDA)
+    add_executable(bench_batch src/benchmark/bench_batch.cpp)
+    target_compile_definitions(bench_batch PRIVATE USE_CUDA)
+    target_link_libraries(bench_batch PRIVATE vector_search_cpu vector_search_cuda)
+endif()
+
 # --- Correctness tests ---
 enable_testing()
 add_executable(test_correctness tests/test_correctness.cpp)
@@ -120,9 +127,20 @@ if(HAVE_CUDA)
     target_link_libraries(test_correctness_gpu PRIVATE vector_search_cpu vector_search_cuda)
     add_test(NAME correctness_gpu COMMAND test_correctness_gpu)
 
+    add_executable(test_correctness_matrix tests/test_correctness_matrix.cpp)
+    target_link_libraries(test_correctness_matrix PRIVATE vector_search_cpu vector_search_cuda)
+    add_test(NAME correctness_matrix COMMAND test_correctness_matrix)
+
     add_executable(test_profile_path_api tests/test_profile_path_api.cpp)
     target_link_libraries(test_profile_path_api PRIVATE vector_search_cpu vector_search_cuda)
     add_test(NAME profile_path_api COMMAND test_profile_path_api)
 
-    message(STATUS "GPU correctness test enabled: run 'ctest' or './test_correctness_gpu' after building")
+    message(STATUS "GPU correctness tests enabled: ctest or ./test_correctness_gpu / ./test_correctness_matrix")
+endif()
+
+# --- Toolchain summary (reproducibility) ---
+message(STATUS "CXX standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+if(HAVE_CUDA)
+    message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 endif()

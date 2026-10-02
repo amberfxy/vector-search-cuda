@@ -7,20 +7,11 @@
 // Intentionally does NOT use shared memory — isolates the mapping change from
 // the existing shared-query tiled baseline.
 #include "gpu_vector_index.cuh"
+#include "cuda_error.hpp"
 #include <cuda_runtime.h>
 #include <cmath>
-#include <stdexcept>
-#include <string>
 
 namespace {
-
-#define CUDA_CHECK(call) do { \
-    cudaError_t err = (call); \
-    if (err != cudaSuccess) { \
-        throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err) \
-            + " at " __FILE__ ":" + std::to_string(__LINE__)); \
-    } \
-} while (0)
 
 // Full warp mask for sm_75+ active warps (32 lanes).
 constexpr unsigned kFullWarpMask = 0xffffffffu;
@@ -73,5 +64,5 @@ void launch_l2_warp_device(const float* d_store, const float* d_query,
         static_cast<size_t>(warps_per_block));
     l2_warp_per_vector_kernel<<<blocks, threads_per_block>>>(
         d_store, d_query, num_vectors, dim, d_scores);
-    CUDA_CHECK(cudaGetLastError());
+    VSC_CUDA_CHECK_LAUNCH();
 }

@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++ cmake libomp-dev
+      - name: Configure & build (CPU-only)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
+          cmake --build build -j
+      - name: CPU tests
+        run: ctest --test-dir build --output-on-failure
+
+  # GPU job is a template: enable when a self-hosted/CUDA runner is available.
+  # gpu:
+  #   runs-on: [self-hosted, gpu]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - run: |
+  #         cmake -B build -DCMAKE_BUILD_TYPE=Release
+  #         cmake --build build -j
+  #         ./build/test_correctness_matrix
