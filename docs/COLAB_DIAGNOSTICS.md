@@ -23,7 +23,7 @@ Colab (Tesla T4) or any machine with `nvidia-smi` / NVML.
 %cd vector-search-cuda
 !sudo apt-get update -qq && sudo apt-get install -y -qq cmake
 
-!cmake -B build -DCMAKE_BUILD_TYPE=Release
+!cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=$(which nvcc)
 !cmake --build build -j 2 --target bench_batch bench_harness diagnostics_stress
 
 !pip install -q pynvml  # optional; nvidia-smi fallback works without it

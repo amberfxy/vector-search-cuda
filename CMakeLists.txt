@@ -5,18 +5,34 @@ cmake_minimum_required(VERSION 3.18)
 # below (check_language) lets this same CMakeLists.txt build a CPU-only
 # version on a laptop with no GPU, and the full GPU version on a CUDA machine,
 # without editing anything.
+#
+# Colab note: `nvcc` may be on PATH / under /usr/local/cuda/bin while
+# check_language(CUDA) still fails unless CMAKE_CUDA_COMPILER is set explicitly.
+# Honor -DCMAKE_CUDA_COMPILER=..., $CUDACXX, then common toolkit paths.
+if(NOT CMAKE_CUDA_COMPILER)
+    if(DEFINED ENV{CUDACXX} AND EXISTS "$ENV{CUDACXX}")
+        set(CMAKE_CUDA_COMPILER "$ENV{CUDACXX}" CACHE FILEPATH "nvcc" FORCE)
+    elseif(EXISTS "/usr/local/cuda/bin/nvcc")
+        set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "nvcc" FORCE)
+    elseif(EXISTS "/usr/bin/nvcc")
+        set(CMAKE_CUDA_COMPILER "/usr/bin/nvcc" CACHE FILEPATH "nvcc" FORCE)
+    endif()
+endif()
+
 include(CheckLanguage)
 check_language(CUDA)
 
 if(CMAKE_CUDA_COMPILER)
     project(vector_search_cuda LANGUAGES CXX CUDA)
     set(HAVE_CUDA TRUE)
-    message(STATUS "CUDA compiler found: building GPU kernels")
+    message(STATUS "CUDA compiler found: building GPU kernels (${CMAKE_CUDA_COMPILER})")
 else()
     project(vector_search_cuda LANGUAGES CXX)
     set(HAVE_CUDA FALSE)
     message(WARNING "No CUDA compiler found -- building CPU-only. "
-                     "Install the CUDA toolkit to build the GPU kernels.")
+                     "Install the CUDA toolkit, or reconfigure with "
+                     "-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc "
+                     "(common on Google Colab).")
 endif()
 
 set(CMAKE_CXX_STANDARD 17)

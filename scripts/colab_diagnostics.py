@@ -17,6 +17,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -83,27 +84,48 @@ def ensure_build(root: Path, jobs: int = 2) -> Dict[str, Any]:
         info["log"] = "binaries already present"
         return info
 
-    # Preflight: Colab CPU-only cmake succeeds but omits CUDA targets.
-    nvcc = run_cmd(["bash", "-lc", "command -v nvcc && nvcc --version | head -3"], cwd=root)
-    info["log"] += nvcc.stdout
-    info["has_nvcc"] = nvcc.returncode == 0 and "nvcc" in (nvcc.stdout or "")
+    # Preflight: locate nvcc (Colab often needs an explicit CMAKE_CUDA_COMPILER).
+    locate = run_cmd(
+        [
+            "bash",
+            "-lc",
+            "command -v nvcc || true; "
+            "ls /usr/local/cuda/bin/nvcc 2>/dev/null || true; "
+            "ls /usr/bin/nvcc 2>/dev/null || true; "
+            "nvcc --version 2>/dev/null | head -3 || true",
+        ],
+        cwd=root,
+    )
+    info["log"] += locate.stdout
+    nvcc_path = ""
+    for line in (locate.stdout or "").splitlines():
+        line = line.strip()
+        if line.endswith("nvcc") and os.path.isfile(line):
+            nvcc_path = line
+            break
+    if not nvcc_path and shutil.which("nvcc"):
+        nvcc_path = shutil.which("nvcc") or ""
+    info["has_nvcc"] = bool(nvcc_path)
+    info["cuda_compiler"] = nvcc_path
     smi = run_cmd(["bash", "-lc", "nvidia-smi -L || true"], cwd=root)
     info["log"] += smi.stdout
 
-    cfg = run_cmd(
-        ["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
-        cwd=root,
-        timeout=600,
-    )
+    cmake_cmd = ["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"]
+    if nvcc_path:
+        cmake_cmd.append(f"-DCMAKE_CUDA_COMPILER={nvcc_path}")
+        info["log"] += f"\nUsing CMAKE_CUDA_COMPILER={nvcc_path}\n"
+
+    cfg = run_cmd(cmake_cmd, cwd=root, timeout=600)
     info["log"] += cfg.stdout
     if cfg.returncode != 0:
         info["error"] = "cmake configure failed"
         return info
     if "No CUDA compiler found" in cfg.stdout or "building CPU-only" in cfg.stdout:
         info["error"] = (
-            "cmake configured CPU-only (no nvcc). "
-            "In Colab: Runtime→GPU, then `!nvcc --version`. "
-            "If nvcc missing: install cuda toolkit matching the GPU image, rm -rf build, reconfigure."
+            "cmake configured CPU-only. On Colab try: "
+            "`rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release "
+            "-DCMAKE_CUDA_COMPILER=$(which nvcc)` "
+            "(or /usr/local/cuda/bin/nvcc)."
         )
         return info
 
