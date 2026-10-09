@@ -114,6 +114,21 @@ def ensure_build(root: Path, jobs: int = 2) -> Dict[str, Any]:
     if nvcc_path:
         cmake_cmd.append(f"-DCMAKE_CUDA_COMPILER={nvcc_path}")
         info["log"] += f"\nUsing CMAKE_CUDA_COMPILER={nvcc_path}\n"
+    # Prefer detected GPU arch when possible (Colab T4 → 75). Avoid sm_70 on CUDA 13+.
+    arch = "75"
+    smi_name = run_cmd(
+        ["bash", "-lc", "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1"],
+        cwd=root,
+    )
+    name = (smi_name.stdout or "").lower()
+    if "a100" in name:
+        arch = "80"
+    elif "a10" in name or "a30" in name or "rtx 30" in name:
+        arch = "86"
+    elif "t4" in name or "v100" in name:
+        arch = "75"
+    cmake_cmd.append(f"-DCMAKE_CUDA_ARCHITECTURES={arch}")
+    info["log"] += f"\nUsing CMAKE_CUDA_ARCHITECTURES={arch}\n"
 
     cfg = run_cmd(cmake_cmd, cwd=root, timeout=600)
     info["log"] += cfg.stdout

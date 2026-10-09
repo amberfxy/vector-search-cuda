@@ -56,7 +56,11 @@ target_link_libraries(vector_search_cpu PUBLIC OpenMP::OpenMP_CXX)
 # --- CUDA library (only if a CUDA compiler was found) ---
 if(HAVE_CUDA)
     set(CMAKE_CUDA_STANDARD 17)
-    set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)  # covers Volta through Ampere; add 89/90 for Ada/Hopper if needed
+    # CUDA 13+ removed sm_70 (Volta). Default: T4 (75) through Ampere.
+    # Override: cmake -DCMAKE_CUDA_ARCHITECTURES="75" or "80;86;89"
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+        set(CMAKE_CUDA_ARCHITECTURES 75 80 86)
+    endif()
 
     # Provide CUDA::cudart (includes + link) to .cpp targets that include
     # <cuda_runtime.h>. Do not hardcode toolkit paths — Colab/nvcc layouts vary.
