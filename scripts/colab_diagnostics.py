@@ -72,7 +72,7 @@ def run_cmd(cmd: List[str], cwd: Path, timeout: Optional[int] = None) -> subproc
 
 def ensure_build(root: Path, jobs: int = 2) -> Dict[str, Any]:
     build = root / "build"
-    info: Dict[str, Any] = {"built": False, "log": ""}
+    info: Dict[str, Any] = {"built": False, "log": "", "has_nvcc": False, "cuda_compiler": ""}
     need = [
         build / "bench_batch",
         build / "bench_harness",
@@ -83,6 +83,13 @@ def ensure_build(root: Path, jobs: int = 2) -> Dict[str, Any]:
         info["log"] = "binaries already present"
         return info
 
+    # Preflight: Colab CPU-only cmake succeeds but omits CUDA targets.
+    nvcc = run_cmd(["bash", "-lc", "command -v nvcc && nvcc --version | head -3"], cwd=root)
+    info["log"] += nvcc.stdout
+    info["has_nvcc"] = nvcc.returncode == 0 and "nvcc" in (nvcc.stdout or "")
+    smi = run_cmd(["bash", "-lc", "nvidia-smi -L || true"], cwd=root)
+    info["log"] += smi.stdout
+
     cfg = run_cmd(
         ["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
         cwd=root,
@@ -92,6 +99,14 @@ def ensure_build(root: Path, jobs: int = 2) -> Dict[str, Any]:
     if cfg.returncode != 0:
         info["error"] = "cmake configure failed"
         return info
+    if "No CUDA compiler found" in cfg.stdout or "building CPU-only" in cfg.stdout:
+        info["error"] = (
+            "cmake configured CPU-only (no nvcc). "
+            "In Colab: Runtime→GPU, then `!nvcc --version`. "
+            "If nvcc missing: install cuda toolkit matching the GPU image, rm -rf build, reconfigure."
+        )
+        return info
+
     bld = run_cmd(
         ["cmake", "--build", "build", "-j", str(jobs),
          "--target", "bench_batch", "bench_harness", "diagnostics_stress"],
@@ -99,9 +114,9 @@ def ensure_build(root: Path, jobs: int = 2) -> Dict[str, Any]:
         timeout=1800,
     )
     info["log"] += bld.stdout
-    info["built"] = bld.returncode == 0 and (build / "bench_batch").exists()
+    info["built"] = bld.returncode == 0 and all(p.exists() for p in need)
     if not info["built"]:
-        info["error"] = "cmake build failed or CUDA unavailable"
+        info["error"] = "cmake build failed — see log; CUDA targets may be unavailable"
     return info
 
 
@@ -123,6 +138,14 @@ def parse_bench_batch_stdout(text: str) -> Dict[str, Any]:
 def diagnose_row(row: ExperimentRow, baseline_e2e: Optional[float] = None) -> ExperimentRow:
     """Map symptoms → likely cause (heuristic, single-GPU Colab scope)."""
     detail = (row.detail or "").lower()
+    if row.status == "skipped":
+        row.failure_mode = "skipped_missing_binary"
+        row.likely_cause = (
+            "CUDA binaries missing — cmake likely built CPU-only or build failed. "
+            "Enable Colab GPU, ensure nvcc exists, rebuild targets."
+        )
+        return row
+
     if row.status == "expected_fail":
         if "nan" in detail or "non-finite" in detail:
             row.failure_mode = "invalid_input"
@@ -136,6 +159,9 @@ def diagnose_row(row: ExperimentRow, baseline_e2e: Optional[float] = None) -> Ex
         elif "transfer" in row.experiment or "legacy" in row.experiment:
             row.failure_mode = "transfer_bottleneck"
             row.likely_cause = "Per-query corpus H2D dominates E2E (legacy path)"
+        else:
+            row.failure_mode = "expected_fail"
+            row.likely_cause = detail[:120] or "Controlled stress case failed as expected"
         return row
 
     if row.status != "ok":
@@ -406,7 +432,23 @@ def write_report(path: Path, meta: Dict[str, Any], rows: List[ExperimentRow]) ->
             "",
         ]
     else:
-        lines += ["- Baseline batch=1: not available (build/GPU missing?)", ""]
+        lines += ["- Baseline batch=1: not available (CUDA binaries missing or sweep failed).", ""]
+
+    build = meta.get("build") or {}
+    if build.get("error") or not build.get("built"):
+        lines += [
+            "## Build / environment blocker",
+            "",
+            f"- built={build.get('built')} skipped={build.get('skipped')} error={build.get('error')}",
+            "- Fix on Colab:",
+            "  1. Runtime → Change runtime type → **GPU**",
+            "  2. `!nvidia-smi` and `!nvcc --version` must both work",
+            "  3. `!rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release`",
+            "  4. Confirm log says `CUDA compiler found`, not `building CPU-only`",
+            "  5. `!cmake --build build -j 2 --target bench_batch bench_harness diagnostics_stress`",
+            "  6. `!ls -l build/bench_batch build/diagnostics_stress`",
+            "",
+        ]
 
     lines += ["| Experiment | Status | Failure mode | Likely cause | Telemetry highlights |",
               "|---|---|---|---|---|"]
@@ -425,11 +467,17 @@ def write_report(path: Path, meta: Dict[str, Any], rows: List[ExperimentRow]) ->
         "## Detected failure modes (this run)",
         "",
     ]
-    if not stressed:
-        lines.append("- No strong failure signatures (or stress binaries skipped).")
-    else:
-        for r in stressed:
-            lines.append(f"- **{r.experiment}**: `{r.failure_mode}` — {r.likely_cause}")
+    real = [r for r in stressed if r.failure_mode != "skipped_missing_binary"]
+    skipped = [r for r in rows if r.status == "skipped"]
+    if skipped:
+        lines.append(
+            "- **Setup issue**: CUDA binaries were missing — experiments were skipped "
+            "(not a kernel performance failure)."
+        )
+    if not real and not skipped:
+        lines.append("- No strong failure signatures.")
+    for r in real:
+        lines.append(f"- **{r.experiment}**: `{r.failure_mode}` — {r.likely_cause}")
 
     lines += [
         "",

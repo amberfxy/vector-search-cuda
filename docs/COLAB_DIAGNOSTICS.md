@@ -64,3 +64,30 @@ python3 scripts/colab_diagnostics.py --help
 python3 scripts/colab_diagnostics.py --skip-stress
 python3 scripts/colab_diagnostics.py --method warp --batches 1,8,32
 ```
+
+## Troubleshooting (REPORT says skipped / baseline missing)
+
+Your report means **`bench_batch` / `diagnostics_stress` were not built** — usually
+cmake ran **CPU-only** because `nvcc` was missing, even though `nvidia-smi` works.
+
+```python
+!nvidia-smi
+!nvcc --version          # must succeed
+!rm -rf build
+!cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -20
+# MUST see: "CUDA compiler found: building GPU kernels"
+# NOT:      "No CUDA compiler found -- building CPU-only"
+!cmake --build build -j 2 --target bench_batch bench_harness diagnostics_stress
+!ls -l build/bench_batch build/bench_harness build/diagnostics_stress
+!python3 scripts/colab_diagnostics.py --skip-build --num-vectors 100000 --dim 384 --batches 1,8,32,128
+```
+
+If `nvcc` is missing on Colab GPU runtime, install a toolkit matching the image, e.g.:
+
+```python
+!apt-get install -y -qq nvidia-cuda-toolkit
+# or use Colab's CUDA path:
+import os
+print(os.environ.get("CUDA_HOME"), os.environ.get("PATH"))
+!ls /usr/local/cuda/bin/nvcc
+```
