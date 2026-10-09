@@ -55,9 +55,14 @@ results/diagnostics/latest/   # copy of the latest run
 |---|---|
 | `cudaMalloc` / OOM in detail | `memory_pressure_oom` |
 | NaN / null / zero-dim throw | `invalid_input` |
-| Legacy E2E ≫ kernel | `transfer_bottleneck` |
-| E2E ≫ baseline batch=1 on same run | `kernel_or_e2e_regression` |
+| Legacy E2E >> kernel (or `stress_transfer_legacy`) | `transfer_bottleneck` |
+| Per-query E2E >> batch=1 baseline (batch > 1) | `per_query_latency_regression` |
+| Absolute batch E2E rises with Q (~Q kernel launches) | not a failure — expected batch scaling |
 | mem_used / mem_total > ~92% | `memory_pressure_near_limit` |
+
+`--skip-build` after a successful manual compile does **not** emit a build blocker.
+Controlled `expected_fail` stress cases are listed separately from real anomalies.
+
 
 ## CLI
 
