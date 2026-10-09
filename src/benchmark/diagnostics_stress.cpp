@@ -4,7 +4,6 @@
 #include "gpu_vector_index.cuh"
 #include "vector_store.hpp"
 #include <cuda_runtime.h>
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
