@@ -74,7 +74,8 @@ cmake ran **CPU-only** because `nvcc` was missing, even though `nvidia-smi` work
 !nvidia-smi
 !nvcc --version          # must succeed
 !rm -rf build
-!cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -20
+# Colab often needs an explicit compiler path (check_language misses PATH nvcc)
+!cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=$(which nvcc) 2>&1 | tee cmake.log | tail -30
 # MUST see: "CUDA compiler found: building GPU kernels"
 # NOT:      "No CUDA compiler found -- building CPU-only"
 !cmake --build build -j 2 --target bench_batch bench_harness diagnostics_stress
@@ -82,12 +83,10 @@ cmake ran **CPU-only** because `nvcc` was missing, even though `nvidia-smi` work
 !python3 scripts/colab_diagnostics.py --skip-build --num-vectors 100000 --dim 384 --batches 1,8,32,128
 ```
 
-If `nvcc` is missing on Colab GPU runtime, install a toolkit matching the image, e.g.:
+If `which nvcc` is empty but the file exists:
 
 ```python
-!apt-get install -y -qq nvidia-cuda-toolkit
-# or use Colab's CUDA path:
-import os
-print(os.environ.get("CUDA_HOME"), os.environ.get("PATH"))
 !ls /usr/local/cuda/bin/nvcc
+!rm -rf build
+!cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
 ```
