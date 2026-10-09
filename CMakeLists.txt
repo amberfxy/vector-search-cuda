@@ -111,6 +111,11 @@ if(HAVE_CUDA)
     add_executable(bench_batch src/benchmark/bench_batch.cpp)
     target_compile_definitions(bench_batch PRIVATE USE_CUDA)
     target_link_libraries(bench_batch PRIVATE vector_search_cpu vector_search_cuda)
+
+    # Controlled Colab-safe stress / failure cases (JSON lines on stdout).
+    add_executable(diagnostics_stress src/benchmark/diagnostics_stress.cpp)
+    target_compile_definitions(diagnostics_stress PRIVATE USE_CUDA)
+    target_link_libraries(diagnostics_stress PRIVATE vector_search_cpu vector_search_cuda)
 endif()
 
 # --- Correctness tests ---

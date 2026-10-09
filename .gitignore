@@ -15,3 +15,7 @@ docs/NVIDIA_INTERVIEW_CANVAS.md
 docs/*INTERVIEW*
 docs/*interview*
 **/*_INTERVIEW_CANVAS*
+
+# Local Colab diagnostics runs (keep README only)
+results/diagnostics/*/
+!results/diagnostics/README.md

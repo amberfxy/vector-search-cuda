@@ -32,7 +32,8 @@ Production-oriented docs: [`docs/production-readiness.md`](docs/production-readi
 [`docs/architecture.md`](docs/architecture.md) ·
 [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md) ·
 [`docs/performance-analysis.md`](docs/performance-analysis.md) ·
-[`docs/pytorch-integration.md`](docs/pytorch-integration.md).
+[`docs/pytorch-integration.md`](docs/pytorch-integration.md) ·
+[`docs/COLAB_DIAGNOSTICS.md`](docs/COLAB_DIAGNOSTICS.md) (nvidia-smi/pynvml telemetry + stress report).
 
 ## Why this project exists
 
@@ -147,6 +148,10 @@ ctest --test-dir build --output-on-failure          # CPU always; GPU if present
 ./build/test_correctness_matrix                     # GPU correctness matrix
 ./scripts/run_regression_suite.sh                   # machine-local CSV (does not overwrite Phase 4)
 ./build/bench_batch --num-vectors 100000 --dim 384 --batch 32 --method warp
+
+# Colab / single-GPU telemetry + batch sweep + controlled stress (new CSV under results/diagnostics/)
+python3 scripts/colab_diagnostics.py --num-vectors 100000 --dim 384 --batches 1,8,32,128
+# Notebook: notebooks/Colab_GPU_Diagnostics.ipynb
 ```
 
 Supported toolchains: C++17, CMake ≥3.18, CUDA architectures `70;75;80;86` by default
