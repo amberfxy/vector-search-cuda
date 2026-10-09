@@ -77,18 +77,27 @@ cmake ran **CPU-only** because `nvcc` was missing, even though `nvidia-smi` work
 !nvcc --version          # must succeed
 !rm -rf build
 # Colab often needs an explicit compiler path (check_language misses PATH nvcc)
-!cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=$(which nvcc) 2>&1 | tee cmake.log | tail -30
+!cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_COMPILER=$(which nvcc) \
+  -DCMAKE_CUDA_ARCHITECTURES=75 \
+  2>&1 | tee cmake.log | tail -30
 # MUST see: "CUDA compiler found: building GPU kernels"
 # NOT:      "No CUDA compiler found -- building CPU-only"
+# NOT:      nvcc fatal: Unsupported gpu architecture 'compute_70'
 !cmake --build build -j 2 --target bench_batch bench_harness diagnostics_stress
 !ls -l build/bench_batch build/bench_harness build/diagnostics_stress
 !python3 scripts/colab_diagnostics.py --skip-build --num-vectors 100000 --dim 384 --batches 1,8,32,128
 ```
+
+**CUDA 13 note:** `sm_70` (Volta) was removed. T4 is `sm_75` — always pass
+`-DCMAKE_CUDA_ARCHITECTURES=75` on Colab T4.
 
 If `which nvcc` is empty but the file exists:
 
 ```python
 !ls /usr/local/cuda/bin/nvcc
 !rm -rf build
-!cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
+!cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES=75
 ```
