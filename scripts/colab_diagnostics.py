@@ -184,18 +184,26 @@ def diagnose_row(row: ExperimentRow, baseline_e2e: Optional[float] = None) -> Ex
         return row
 
     if row.status == "expected_fail":
-        if "nan" in detail or "non-finite" in detail:
-            row.failure_mode = "invalid_input"
-            row.likely_cause = "Host-side validation rejected non-finite query values"
-        elif "shape" in detail or "dim" in detail or "null" in detail or "zero" in detail:
-            row.failure_mode = "invalid_input"
-            row.likely_cause = "Invalid dimensions / null / empty arguments"
-        elif "oom" in detail or "out of memory" in detail or "memory allocation" in detail:
-            row.failure_mode = "memory_pressure_oom"
-            row.likely_cause = "cudaMalloc failed under oversized N/dim/batch working set"
-        elif "transfer" in row.experiment or "legacy" in row.experiment:
+        # Check experiment tags before scanning stdout (stdout often contains "dim=").
+        if "transfer" in row.experiment or "legacy" in row.experiment:
             row.failure_mode = "transfer_bottleneck"
             row.likely_cause = "Per-query corpus H2D dominates E2E (legacy path)"
+        elif "oom" in row.experiment or "oom" in detail or "out of memory" in detail or "memory allocation" in detail:
+            row.failure_mode = "memory_pressure_oom"
+            row.likely_cause = "cudaMalloc failed under oversized allocation / working set"
+        elif "nan" in row.experiment or "nan" in detail or "non-finite" in detail:
+            row.failure_mode = "invalid_input"
+            row.likely_cause = "Host-side validation rejected non-finite query values"
+        elif (
+            "null" in row.experiment
+            or "zero" in row.experiment
+            or "invalid" in row.experiment
+            or "null store" in detail
+            or "num_vectors and dim must be" in detail
+            or "h_store is null" in detail
+        ):
+            row.failure_mode = "invalid_input"
+            row.likely_cause = "Invalid dimensions / null / empty arguments"
         else:
             row.failure_mode = "expected_fail"
             row.likely_cause = detail[:120] or "Controlled stress case failed as expected"
@@ -205,7 +213,7 @@ def diagnose_row(row: ExperimentRow, baseline_e2e: Optional[float] = None) -> Ex
         if "oom" in detail or "out of memory" in detail:
             row.failure_mode = "memory_pressure_oom"
             row.likely_cause = "Device memory exhausted"
-        elif "invalid" in detail or "nan" in detail:
+        elif "invalid" in detail or "nan" in detail or "non-finite" in detail:
             row.failure_mode = "invalid_input"
             row.likely_cause = "Bad input rejected or propagated"
         else:
@@ -213,7 +221,8 @@ def diagnose_row(row: ExperimentRow, baseline_e2e: Optional[float] = None) -> Ex
             row.likely_cause = "See detail / stdout"
         return row
 
-    # Healthy runs: optional soft signals
+    # Healthy runs: soft signals only (do not treat larger batch absolute E2E as regression —
+    # batch=Q launches Q kernels; compare per-query E2E instead).
     if (
         row.mem_total_mib
         and row.mem_used_mib_max
@@ -221,13 +230,32 @@ def diagnose_row(row: ExperimentRow, baseline_e2e: Optional[float] = None) -> Ex
     ):
         row.failure_mode = "memory_pressure_near_limit"
         row.likely_cause = "High device memory occupancy during workload"
-    elif baseline_e2e and row.e2e_mean_ms and row.e2e_mean_ms > 3.0 * baseline_e2e:
-        row.failure_mode = "kernel_or_e2e_regression"
-        row.likely_cause = "E2E much slower than baseline batch=1 on same machine"
     elif row.experiment.startswith("stress_transfer") and row.e2e_mean_ms and row.kernel_mean_ms:
         if row.e2e_mean_ms > 5.0 * max(row.kernel_mean_ms, 1e-6):
             row.failure_mode = "transfer_bottleneck"
             row.likely_cause = "E2E >> kernel; host↔device transfer likely dominates"
+        else:
+            row.failure_mode = "none"
+            row.likely_cause = "No failure signature detected"
+    elif (
+        row.experiment.startswith("batch_sweep_")
+        and row.batch
+        and row.batch > 1
+        and baseline_e2e
+        and row.e2e_mean_ms
+    ):
+        per_query = row.e2e_mean_ms / float(row.batch)
+        if per_query > 2.5 * baseline_e2e:
+            row.failure_mode = "per_query_latency_regression"
+            row.likely_cause = (
+                f"Per-query E2E {per_query:.3f} ms >> batch=1 baseline {baseline_e2e:.3f} ms"
+            )
+        else:
+            row.failure_mode = "none"
+            row.likely_cause = (
+                f"Expected batch scaling (per-query E2E ≈ {per_query:.3f} ms; "
+                f"absolute E2E rises with Q because search_batch launches Q kernels)"
+            )
     else:
         row.failure_mode = "none"
         row.likely_cause = "No failure signature detected"
@@ -443,7 +471,6 @@ def write_rows_csv(path: Path, rows: List[ExperimentRow]) -> None:
 def write_report(path: Path, meta: Dict[str, Any], rows: List[ExperimentRow]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     baseline = next((r for r in rows if r.experiment == "batch_sweep_Q1" and r.status == "ok"), None)
-    stressed = [r for r in rows if r.failure_mode and r.failure_mode not in ("none", None)]
 
     lines = [
         "# Colab GPU diagnostics report",
@@ -472,7 +499,9 @@ def write_report(path: Path, meta: Dict[str, Any], rows: List[ExperimentRow]) ->
         lines += ["- Baseline batch=1: not available (CUDA binaries missing or sweep failed).", ""]
 
     build = meta.get("build") or {}
-    if build.get("error") or not build.get("built"):
+    # Only show blocker when configure/build actually failed — not when --skip-build
+    # was used after a manual successful compile.
+    if build.get("error") or (build.get("built") is False and not build.get("skipped")):
         lines += [
             "## Build / environment blocker",
             "",
@@ -480,7 +509,8 @@ def write_report(path: Path, meta: Dict[str, Any], rows: List[ExperimentRow]) ->
             "- Fix on Colab:",
             "  1. Runtime → Change runtime type → **GPU**",
             "  2. `!nvidia-smi` and `!nvcc --version` must both work",
-            "  3. `!rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release`",
+            "  3. `!rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release "
+            "-DCMAKE_CUDA_COMPILER=$(which nvcc) -DCMAKE_CUDA_ARCHITECTURES=75`",
             "  4. Confirm log says `CUDA compiler found`, not `building CPU-only`",
             "  5. `!cmake --build build -j 2 --target bench_batch bench_harness diagnostics_stress`",
             "  6. `!ls -l build/bench_batch build/diagnostics_stress`",
@@ -504,17 +534,33 @@ def write_report(path: Path, meta: Dict[str, Any], rows: List[ExperimentRow]) ->
         "## Detected failure modes (this run)",
         "",
     ]
-    real = [r for r in stressed if r.failure_mode != "skipped_missing_binary"]
+    # expected_fail stress cases are successes of the harness; call them out separately
+    expected = [r for r in rows if r.status == "expected_fail"]
+    anomalies = [
+        r
+        for r in rows
+        if r.status == "ok"
+        and r.failure_mode
+        and r.failure_mode
+        not in ("none", "memory_pressure_near_limit")
+        and not str(r.likely_cause or "").startswith("Expected batch scaling")
+    ]
     skipped = [r for r in rows if r.status == "skipped"]
     if skipped:
         lines.append(
             "- **Setup issue**: CUDA binaries were missing — experiments were skipped "
             "(not a kernel performance failure)."
         )
-    if not real and not skipped:
+    if expected:
+        lines.append("- **Controlled stress (expected failures)** — validation working as designed:")
+        for r in expected:
+            lines.append(f"  - **{r.experiment}**: `{r.failure_mode}` — {r.likely_cause}")
+    if anomalies:
+        lines.append("- **Anomalies on otherwise-ok runs:**")
+        for r in anomalies:
+            lines.append(f"  - **{r.experiment}**: `{r.failure_mode}` — {r.likely_cause}")
+    if not skipped and not expected and not anomalies:
         lines.append("- No strong failure signatures.")
-    for r in real:
-        lines.append(f"- **{r.experiment}**: `{r.failure_mode}` — {r.likely_cause}")
 
     lines += [
         "",
